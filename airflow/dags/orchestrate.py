@@ -1,5 +1,6 @@
 import time
 import os
+import pendulum
 from databricks.sdk import WorkspaceClient
 from airflow.decorators import dag, task
 from airflow.operators.bash import BashOperator
@@ -7,8 +8,14 @@ from databricks.sdk.service.jobs import RunLifeCycleState, RunResultState
 from dotenv import load_dotenv
 load_dotenv()
 
+# schedule: 0 11 * * * every day at 11:00 AM
+# @dag(
+#     dag_id="orchestrate",
+#     schedule="0 11 * * *",
+#     catchup=False,
+#     start_date=pendulum.datetime(year=2026, month=6, day=18, tz="Australia/Melbourne")
+# )
 
-@dag
 def orchestrate():
 
     @task
