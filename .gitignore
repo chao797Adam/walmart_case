@@ -1,0 +1,26 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+
+# Virtual environments
+.venv
+connection
+.env
+.python-version
+profiles.yml
+main.py
+dbt.log
+logs/
+target/
+dbt_packages/
+
+scripts/
+airflow/walmart_proj
+airflow/config
+test.py
+
+airflow/config/airflow.cfg

@@ -1,0 +1,14 @@
+[project]
+name = "walmart-dbt-case"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+  "apache-airflow>=3.3.0",
+  "airflow-operators>=0.11.0",
+  "dbt-core>=1.11.11",
+  "dbt-databricks>=1.12.1",
+  "databricks-sdk>=0.117.0",
+]
+

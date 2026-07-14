@@ -1,0 +1,10 @@
+snapshots:
+  - name: dim_stores_snapshot
+    relation: ref('stores_t')
+    config:
+      schema: snapshots
+      database: walmart
+      unique_key: store_id
+      strategy: timestamp
+      updated_at: updated_timestamp
+      dbt_valid_to_current: "to_date('9999-12-31')"

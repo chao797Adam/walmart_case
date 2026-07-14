@@ -1,0 +1,34 @@
+
+name: 'walmart_proj'
+version: '1.0.0'
+
+profile: 'walmart_proj'
+
+
+model-paths: ["models"]
+analysis-paths: ["analyses"]
+test-paths: ["tests"]
+seed-paths: ["seeds"]
+macro-paths: ["macros"]
+snapshot-paths: ["snapshots"]
+
+clean-targets:        
+  - "target"
+  - "dbt_packages"
+
+
+models:
+  walmart_proj:
+    silver_t:
+      +materialized: incremental
+      +schema: silver_t
+    silver_b:
+      +materialized: incremental
+      +schema: silver_b
+    gold:
+      +materialized: table
+      +tags: ["gold"]
+      +schema: gold
+snapshots:
+  walmart_proj:
+    +target_schema: snapshots      
