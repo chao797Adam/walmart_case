@@ -5,13 +5,17 @@
     )
 }}
 
-SELECT 
-    *,
-    current_timestamp() AS processed_at
-FROM 
-    {{ source('walmart_databricks', 'employees') }}
-
+select *, current_timestamp() as processed_at
+from {{ source('walmart_databricks', 'employees') }}
 
 {% if is_incremental() %}
-    WHERE updated_timestamp > (SELECT COALESCE(MAX(updated_timestamp), '1900-01-01') FROM {{ this }})
+    where
+        updated_timestamp
+        > (select coalesce(max(updated_timestamp), '1900-01-01') from {{ this }})
 {% endif %}
+
+qualify
+    row_number() over (
+        partition by employee_id order by cast(updated_timestamp as timestamp) desc
+    )
+    = 1
