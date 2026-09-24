@@ -39,8 +39,11 @@ flowchart TD
 
 1. **Source** — PostgreSQL holds the raw Walmart dataset
    (`orders`, `customers`, `products`, `order_items`, `stores`, `employees`).
-2. **Bronze** — A Databricks Job batch-syncs rows where
-   `updated_timestamp > last_checkpoint` into `bronze.*`.
+2. **Bronze** — A per-table Auto Loader (`cloudFiles`) stream ingests new files
+   from a raw Volume into `bronze.*`. See
+   [Bronze Ingestion](#bronze-ingestion-auto-loader-file-level-incremental) below —
+   this is **file-level** incrementality, distinct from the row-level CDC that
+   happens one layer up, in Silver.
 3. **Silver_t** — One dbt **incremental model per table**, using
    `is_incremental()` + `updated_timestamp` as the cursor column.
 4. **Silver_b** — A single **One Big Table (OBT)**, built by `LEFT JOIN`-ing
@@ -58,9 +61,13 @@ flowchart TD
      ) = 1
      ```
 
+     See [Gold Dimensions: SCD1, Incrementally](#gold-dimensions-scd1-incrementally)
+     for why these are `incremental` (not `table`) and what "SCD1" means here.
 6. **Snapshots** — The four dimension tables each have a dbt **snapshot**
    (SCD Type 2, `timestamp` strategy). Fact tables are intentionally **not**
-   snapshotted — they represent immutable business events.
+   snapshotted — they represent immutable business events. See
+   [SCD1 Gold vs. SCD2 Snapshots](#scd1-gold-vs-scd2-snapshots-why-both) for why
+   both exist side by side.
 
 ---
 
@@ -158,6 +165,73 @@ dbt run  --select gold
 dbt snapshot
 dbt run  --select gold/fact
 ```
+
+---
+
+## Bronze Ingestion: Auto Loader (file-level incremental)
+
+Each source table is loaded into Bronze with a per-table Auto Loader
+(`cloudFiles`) stream, triggered `once` per Databricks Job run:
+
+```python
+df = spark.readStream.format("cloudFiles") \
+    .option("cloudFiles.format", "csv") \
+    .option("cloudFiles.schemaLocation", f"/Volumes/walmart/bronze/bronzevolume/{table_name}/checkpoint") \
+    .option("cloudFiles.schemaEvolutionMode", "rescue") \
+    .load(f"/Volumes/walmart/raw/rawvolume/{table_name}/")
+
+df.writeStream.format("delta") \
+    .outputMode("append") \
+    .trigger(once=True) \
+    .option("checkpointLocation", f"/Volumes/walmart/bronze/bronzevolume/{table_name}/checkpoint") \
+    .toTable(f"walmart.bronze.{table_name}")
+```
+
+**This is file-level incrementality, not row-level CDC.** Auto Loader's
+`checkpointLocation` tracks which *files* under
+`/Volumes/walmart/raw/rawvolume/{table_name}/` have already been ingested —
+it has no awareness of the `updated_timestamp` column inside those files, and
+it never deduplicates rows. If the same customer appears again in a later
+file (e.g. an upstream full daily export), Bronze happily appends another
+copy — Bronze is pure append-only history at the file level. The row-level
+cursor (`updated_timestamp > max(updated_timestamp)`) only enters the
+pipeline one layer up, in the `silver_t` incremental models, which is also
+where the resulting duplicate rows finally get collapsed via
+`qualify row_number() = 1`. Bronze's job is simply "don't re-read a file
+you've already read"; Silver's job is "don't re-process a row you've
+already seen, and only keep the latest version of each one."
+
+> **Note on `.option("path", ...)`:** an earlier version of this script also
+> passed `.option("path", f"/Volumes/.../{table_name}/data")` alongside
+> `.toTable(...)`, intending to pin the table's storage location inside the
+> Volume. On Databricks Free Edition this produced an intermittent
+> `AnalysisException: Missing cloud file system scheme` — `toTable()` implies
+> a UC-managed table, and giving it a `/Volumes/...` path (not a real cloud
+> URI) confuses UC's temporary-credential generation for that path. Removing
+> `.option("path", ...)` and letting `toTable()` fully manage storage resolved
+> it. This doesn't affect incrementality — `checkpointLocation` is what drives
+> incremental loading, not where the table's data physically lives.
+
+### Verifying Bronze row counts across all six tables
+
+```sql
+select 'orders' as table_name, count(*) as row_count from walmart.bronze.orders
+union all
+select 'customers', count(*) from walmart.bronze.customers
+union all
+select 'products', count(*) from walmart.bronze.products
+union all
+select 'order_items', count(*) from walmart.bronze.order_items
+union all
+select 'stores', count(*) from walmart.bronze.stores
+union all
+select 'employees', count(*) from walmart.bronze.employees
+order by table_name;
+```
+
+One query across all six Bronze tables, rather than checking each table
+individually, to confirm every Auto Loader stream actually landed data
+before trusting downstream Silver/Gold builds on top of it.
 
 ---
 
@@ -268,6 +342,95 @@ qualify row_number() over (
 This keeps **facts, dimensions, and the OBT as independent, parallel outputs
 of the Silver layer** — no Gold model depends on another Gold/Silver-wide
 output.
+
+### Gold Dimensions: SCD1, Incrementally
+
+`dim_customers` (and the other three dimensions) were initially built as a
+`materialized='table'` model — a full rebuild off `silver_t.customers_t` on
+every run:
+
+```sql
+-- before
+with base_customers as (
+    select ... from {{ ref('customers_t') }}
+)
+select ..., current_timestamp() as customer_gold_processed_at
+from base_customers
+qualify row_number() over (partition by customer_id order by updated_timestamp desc) = 1
+```
+
+This is correct, but not efficient. `customers_t` itself is `incremental` and
+**append-only at the row-version level** — every time a customer's `email` or
+`address` changes, `customers_t` gains a *new* row for that `customer_id`
+rather than overwriting the old one (this is what lets the SCD2 snapshot
+below reconstruct history). That means `customers_t` grows without bound as
+customers get updated over time, and a `table`-materialized `dim_customers`
+re-scans and re-sorts *all* of that accumulated history on every single run,
+just to figure out which row is current — a cost that keeps growing.
+
+Switched to `incremental`:
+
+```sql
+{{
+  config(
+    materialized='incremental',
+    unique_key='customer_id',
+    merge_update_columns=['first_name','last_name','email','phone','city','province','country','updated_timestamp','is_active','processed_at','customer_gold_processed_at'],
+    alias='dim_customers',
+    tags=['gold', 'dim']
+  )
+}}
+with base_customers as (
+    select
+        customer_id, first_name, last_name, email, phone,
+        city, province, country,
+        created_timestamp, updated_timestamp, is_active, processed_at
+    from {{ ref('customers_t') }}
+    {% if is_incremental() %}
+        where updated_timestamp > (select coalesce(max(updated_timestamp), timestamp '1900-01-01') from {{ this }})
+    {% endif %}
+)
+select
+    customer_id, first_name, last_name, email, phone,
+    city, province, country,
+    created_timestamp, updated_timestamp, is_active, processed_at,
+    current_timestamp() as customer_gold_processed_at
+from base_customers
+qualify row_number() over (partition by customer_id order by updated_timestamp desc) = 1
+```
+
+Now each run only scans the slice of `customers_t` newer than what's already
+in `dim_customers`, and `merge_update_columns` overwrites the matched
+`customer_id` in place. `qualify` still runs, but only needs to dedupe *this
+run's* incoming batch, not the table's entire history.
+
+**This makes `dim_customers` a textbook SCD Type 1 dimension**: matched keys
+are updated in place via `MERGE`, old attribute values are overwritten and
+not retrievable from this table. (Worth being precise about the term here —
+elsewhere in this project, e.g. `fact_order_items`'s incremental merge, the
+same `MERGE`-based upsert pattern exists but isn't called "SCD1," because
+SCD is a dimensional-modeling term and a fact table isn't a dimension. Here
+it *is* a dimension, and it *does* overwrite without history, so "SCD1"
+applies correctly.)
+
+### SCD1 Gold vs. SCD2 Snapshots: why both
+
+`dim_customers` (SCD1, above) and `dim_customers_snapshot` (SCD2, via `dbt
+snapshot`) are both built from the same `customers_t`, but they aren't
+redundant — they answer two structurally different questions:
+
+| Question | Answered by |
+| --- | --- |
+| "What's this customer's email *right now*?" | `dim_customers` — SCD1, one row per key, cheap to query, no history to filter through |
+| "What was this customer's address 3 months ago, and when did it change?" | `dim_customers_snapshot` — SCD2, `dbt_valid_from`/`dbt_valid_to` let you query any point in time |
+
+An SCD1 table structurally *cannot* answer the second question (no historical
+rows exist to answer it with), and using the SCD2 snapshot as the default
+"what's current" lookup would mean every query pays the cost of filtering
+`dbt_valid_to_current` on a much larger, ever-growing table for no benefit.
+Keeping both isn't double-covering the same need — it's two purpose-built
+outputs off the same Silver source, each optimized for the query pattern it
+serves.
 
 ### Verifying dimension uniqueness
 
