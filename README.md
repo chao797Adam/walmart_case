@@ -49,7 +49,7 @@ flowchart TD
 4. **Silver_b** — A single **One Big Table (OBT)**, built by `LEFT JOIN`-ing
    all six `silver_t` tables around `orders`.
 5. **Gold** —
-   - **Facts** (`fact_orders`, `fact_order_items`) are built **directly from
+   - **Facts** (`fact_order_items`) are built **directly from
      `silver_t`**, not from the OBT, to avoid inheriting the order → order_items
      row explosion.
    - **Dimensions** (`dim_customers`, `dim_products`, `dim_stores`,
