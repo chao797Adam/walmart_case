@@ -651,6 +651,26 @@ so a NULL foreign key is a *legitimate* state (e.g. an order with no matching
 employee), but the test still surfaces it so unexpected NULL rates don't go
 unnoticed.
 
+### Cast validation before Silver
+
+Because every Bronze column is `string`, `cast(...)` failures are silent —
+Spark returns `NULL` instead of raising an error. Before writing any
+`silver_t` model, each numeric / date column was validated with:
+
+```sql
+select count(*) as bad_rows
+from walmart.bronze.<table>
+where cast(<col> as <type>) is null
+  and <col> is not null;
+```
+
+A non-zero result means some rows have values that cannot be cast (e.g.
+`"$164.31"` instead of `"164.31"`). All columns in this dataset returned
+`0`, so plain `cast` is safe — no regex cleaning needed. This check is
+cheap insurance against silently NULL-ing entire columns in Silver, which
+would otherwise go unnoticed until downstream aggregations came back
+wrong.
+
 ### Key conventions
 
 - **`unique` + `not_null` on every business key** — the baseline every
@@ -693,6 +713,29 @@ dbt test
 | # | Deviation | Why |
 |---|---|---|
 | 4 | `qualify row_number() = 1` on every `silver_t` model, partitioned by that table's own primary key | `MERGE` requires one row per key in the incoming batch; partitioning by the wrong key silently corrupts the dedup |
+
+### Silver (`silver_t`) — type casting
+
+The reference tutorial reads from PostgreSQL, where column types are
+declared in the source schema (`customer_id` is `int`, `updated_timestamp`
+is `timestamp`). Its `silver_t`-equivalent models inherit those types for
+free.
+
+This project reads from CSV via Auto Loader, which has no schema
+information — **every column arrives as `string`**. Silver models must
+explicitly `cast` every non-text column:
+
+| Column pattern | Cast to |
+|---|---|
+| `*_id` (`customer_id`, `order_id`, `product_id`, `store_id`, `employee_id`, `order_item_id`) | `bigint` |
+| `price`, `unit_price`, `line_amount`, `total_amount`, `salary` | `decimal(18,2)` |
+| `created_timestamp`, `updated_timestamp`, `order_timestamp` | `timestamp` |
+| `is_active` | stays `string` (queried as `= 'Y'`) |
+| `_rescued_data` | dropped (Auto Loader debug column) |
+
+Without casting, `MERGE ON customer_id = ...` would compare strings, joins
+would fall back to string comparison, and numeric aggregations would
+silently produce wrong results.
 
 ### Gold — Facts
 

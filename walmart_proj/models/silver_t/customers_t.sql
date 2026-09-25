@@ -1,7 +1,13 @@
 {{
     config(
         materialized='incremental',
-        unique_key='customer_id'
+        unique_key='customer_id',
+        merge_update_columns=[
+            'first_name', 'last_name', 'email', 'phone',
+            'city', 'province', 'country',
+            'created_timestamp', 'updated_timestamp',
+            'is_active', 'processed_at'
+        ]
     )
 }}
 
@@ -30,6 +36,7 @@ from {{ source('walmart_databricks', 'customers') }}
 
 qualify
     row_number() over (
-        partition by customer_id order by cast(updated_timestamp as timestamp) desc
+        partition by cast(customer_id as bigint)
+        order by cast(updated_timestamp as timestamp) desc
     )
     = 1
