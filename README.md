@@ -350,6 +350,30 @@ hardcoded.
 
 ## Design Decisions
 
+### Why Auto Loader instead of Lakeflow Connect for PostgreSQL?
+
+The course this project follows connects to a Ghost-hosted PostgreSQL
+instance and pulls rows directly via a database connection. That Ghost
+instance is no longer available, so re-establishing a live PostgreSQL source
+was not an option.
+
+Databricks' managed ingestion path for operational databases is **Lakeflow
+Connect**, which supports PostgreSQL via logical replication and CDC out of
+the box. However, Lakeflow Connect requires a live, reachable PostgreSQL
+source with `wal_level = logical`, a replication slot, and a publication
+configured on the source side — none of which exist anymore, because the
+source database itself is gone.
+
+What this project actually has is a **static CSV snapshot** of the same
+dataset, uploaded to a raw Volume. For file-based sources on cloud object
+storage or Unity Catalog Volumes, **Auto Loader is the correct
+Databricks-native ingestion tool** — Lakeflow Connect is built for SaaS apps
+and operational databases, not files on object storage.
+
+The choice isn't "Auto Loader over Lakeflow Connect" in the abstract — the
+**source shape changed** (live database → static files), and the ingestion
+tool followed.
+
 ### Source: CSV in Volume
 
 The course this project follows connects directly to a live database and
