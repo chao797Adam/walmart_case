@@ -180,7 +180,7 @@ print(f"=== Running Bronze ingestion stream for table: {table_name} ===")
 
 df = spark.readStream.format("cloudFiles") \
     .option("cloudFiles.format", "csv") \
-    .option("cloudFiles.schemaLocation", f"/Volumes/walmart/bronze/bronzevolume/{table_name}/checkpoint") \
+    .option("cloudFiles.schemaLocation", f"/Volumes/walmart/bronze/bronzevolume/{table_name}/schema") \
     .option("cloudFiles.schemaEvolutionMode", "rescue") \
     .load(f"/Volumes/walmart/raw/rawvolume/{table_name}/")
 
