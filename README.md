@@ -314,7 +314,35 @@ hardcoded.
 
 ## Design Decisions
 
-### Dimensions are built from `silver_t`, not from the OBT
+### `qualify row_number() = 1` on every `silver_t` model — not optional
+
+All six `silver_t` models (`orders_t`, `customers_t`, `products_t`,
+`order_items_t`, `stores_t`, `employees_t`) are `materialized='incremental'`
+with a `unique_key`, which means dbt-databricks generates a `MERGE` statement
+on every incremental run. `MERGE` has a hard requirement: **the incoming
+batch cannot contain more than one row per key** — if it does, Databricks
+raises an error (multiple source rows matching the same target row), the
+same failure mode hit earlier in this project's `job_ready_dbt` sibling.
+
+Because Bronze is pure append-only (see
+[Bronze Ingestion](#bronze-ingestion-auto-loader-file-level-incremental)), a
+single incremental window can legitimately contain more than one version of
+the same row — e.g. a customer updated twice in one day, both landing in the
+same batch. Without a dedup step, this isn't just a correctness risk, it's a
+`MERGE` that outright fails to run. Each `_t` model therefore ends with:
+
+```sql
+qualify
+    row_number() over (
+        partition by <table's own primary key> order by cast(updated_timestamp as timestamp) desc
+    )
+    = 1
+```
+
+partitioned by that table's own key (`order_id` for `orders_t`, `product_id`
+for `products_t`, and so on) — not copy-pasted from another table's key.
+
+
 
 The course builds dimensions like `dim_customers` by `SELECT DISTINCT` from the
 OBT. This project deliberately does not, for two reasons:
@@ -451,6 +479,54 @@ dimension tables (`dim_customers`, `dim_products`, `dim_stores`,
 > **Naming note:** fact models use the `fact_*` prefix in the repo
 > (`fact_orders.sql`, `fact_order_items.sql`); the `fct_*` name appears in
 > older test configs. Treat `fact_*` as canonical.
+
+### `fact_orders.sql` and `eph_orders.sql`: two flawed legacy models, both slated for removal
+
+Two files in `models/gold/` were identified as leftovers from an earlier,
+abandoned approach — neither is a correct order-grain fact table, and neither
+is currently referenced by anything downstream:
+
+**`fact_orders.sql`** selects from `obt_b`:
+
+```sql
+SELECT order_id, order_item_id, product_id, store_id, employee_id,
+       customer_id, total_amount, quantity, unit_price, line_amount
+FROM {{ ref('obt_b') }}
+```
+
+Despite the name, this is **not order-grain** — it carries `order_item_id`,
+`product_id`, `quantity`, `unit_price`, `line_amount`, which makes it
+line-item grain, i.e. a rougher duplicate of `fact_order_items`, built from
+the fan-out-prone OBT instead of `order_items_t` directly. It has no `config`
+block (unlike every other Gold model in this project) and isn't covered by
+any test in `properties.yml` — all signs of an early, superseded attempt.
+
+**`eph_orders.sql`** tries to recover order grain from the OBT via `DISTINCT`:
+
+```sql
+select distinct
+    order_id, payment_method, order_status, order_timestamp,
+    order_created_timestamp, order_updated_timestamp, order_is_active,
+    order_processed_at, obt_b_processed_at,
+    current_timestamp() as order_gold_processed_at
+from {{ ref('obt_b') }}
+```
+
+This is exactly the anti-pattern already called out in
+[Dimensions are built from `silver_t`, not from the OBT](#dimensions-are-built-from-silver_t-not-from-the-obt):
+`obt_b_processed_at` is a `current_timestamp()` audit column, which by
+definition can differ across the fanned-out rows for the same `order_id` —
+so `DISTINCT` here is structurally incapable of collapsing back to one row
+per order. This file doesn't just risk the same mistake described elsewhere
+in this README; it *is* that mistake, still present in the codebase.
+
+**Resolution:** both files should be removed. There is currently no
+dedicated order-grain fact table in this project (order-level fields are
+only accessible today via `fact_order_items`, at line-item grain, or by
+querying `orders_t` directly). If an order-grain fact table is needed later,
+it should be built the same way `fact_order_items` is — directly from
+`orders_t`, with `qualify row_number()` (or reliance on `orders_t`'s own
+dedup) rather than `DISTINCT` on the OBT.
 
 ---
 
