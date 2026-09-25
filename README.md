@@ -593,12 +593,34 @@ dedup) rather than `DISTINCT` on the OBT.
 
 ## Data Quality
 
-- `unique` + `not_null` on business keys: `order_id`, `product_id`,
-  `order_item_id`, `customer_id`, `employee_id`, `store_id`.
-- `relationships` test on `fact_order_items.product_id → dim_products.product_id`.
-- `dbt_utils.accepted_range` (`min_value: 0`) on `fact_order_items.line_amount`.
-- `dbt_utils.expression_is_true` (`price >= 0`) on `products_t`.
-- Dimension uniqueness enforced **at the SQL level**, not by `DISTINCT`.
+**15 tests total**, spread across `silver_t`, Gold dimensions, and
+`fact_order_items`:
+
+| Layer | Model | Column | Test |
+|---|---|---|---|
+| Gold (dim) | `dim_customers` | `customer_id` | `unique`, `not_null` |
+| Gold (dim) | `dim_employees` | `employee_id` | `unique`, `not_null` |
+| Gold (dim) | `dim_employees` | `store_id` | `not_null` |
+| Gold (dim) | `dim_stores` | `store_id` | `unique`, `not_null` |
+| Gold (dim) | `dim_products` | `product_id` | `unique`, `not_null` |
+| Gold (fact) | `fact_order_items` | `order_item_id` | `unique`, `not_null` |
+| Gold (fact) | `fact_order_items` | `order_id` | `not_null` |
+| Gold (fact) | `fact_order_items` | `product_id` | `not_null`, `relationships → dim_products.product_id` |
+| Gold (fact) | `fact_order_items` | `line_amount` | `dbt_utils.accepted_range(min_value: 0)` |
+| Silver (`silver_t`) | `products_t` | `price` | `dbt_utils.expression_is_true(>= 0)` |
+| Silver (`silver_t`) | `orders_t` | `order_id` | `not_null`, `unique` |
+
+Key conventions:
+
+- **`unique` + `not_null` on every business key** — the baseline every
+  dimension and fact must pass.
+- **`relationships` from `fact_order_items.product_id` → `dim_products.product_id`**
+  — referential integrity from fact to dimension.
+- **Numeric sanity at the Silver layer** — `price >= 0` on `products_t`,
+  `line_amount >= 0` on `fact_order_items`.
+- **Dimension uniqueness enforced in SQL** (via `qualify row_number()`), then
+  spot-checked with `GROUP BY ... HAVING COUNT(*) > 1` rather than relying
+  on `DISTINCT`.
 
 Run all tests:
 
@@ -608,6 +630,46 @@ dbt test
 
 ---
 
+## Notes & Deviations from the Reference Tutorial
+
+> ⚠️ This project follows the
+> [reference tutorial](https://www.youtube.com/watch?v=ZEE-jNAthB0&t=27s)
+> but deviates in several places. Each deviation is listed below with the
+> reason. Full rationale for each is in [Design Decisions](#design-decisions).
+
+### Source & Ingestion
+
+| # | Deviation | Why |
+|---|---|---|
+| 1 | Static CSV snapshot in a Volume, not a live PostgreSQL connection | The tutorial's Ghost-hosted PostgreSQL instance is gone |
+| 2 | Auto Loader (`cloudFiles`), not Lakeflow Connect | Lakeflow Connect needs a live database; Auto Loader is the right tool for files in a Volume |
+| 3 | File-level incrementality only | Auto Loader tracks files, not rows; row-level CDC happens in Silver |
+
+### Silver (`silver_t`)
+
+| # | Deviation | Why |
+|---|---|---|
+| 4 | `qualify row_number() = 1` on every `silver_t` model, partitioned by that table's own primary key | `MERGE` requires one row per key in the incoming batch; partitioning by the wrong key silently corrupts the dedup |
+
+### Gold — Facts
+
+| # | Deviation | Why |
+|---|---|---|
+| 5 | `fact_order_items` built directly from `order_items_t`, not from the OBT | OBT has order → order_items fan-out; facts would inherit duplicated rows |
+| 6 | No separate order-grain fact table | `fact_orders.sql` (line-item grain mislabeled) and `eph_orders.sql` (broken `DISTINCT` on OBT) are both documented and slated for removal |
+
+### Gold — Dimensions
+
+| # | Deviation | Why |
+|---|---|---|
+| 7 | Dimensions built from `silver_t`, not `SELECT DISTINCT` on the OBT | `DISTINCT` can't collapse fan-out, and audit columns break it |
+| 8 | Dimensions are `incremental`, not `table` | `silver_t` is append-only row versions; a full rebuild re-scans unbounded history |
+| 9 | SCD1 gold dimensions and SCD2 snapshots both exist | "current" vs "historical" are different query patterns |
+
+---
+
 ## Reference
 
 - Course / inspiration: [Walmart End-to-End Data Pipeline (YouTube)](https://www.youtube.com/watch?v=ZEE-jNAthB0&t=27s)
+
+
