@@ -593,8 +593,10 @@ dedup) rather than `DISTINCT` on the OBT.
 
 ## Data Quality
 
-**15 tests total**, spread across `silver_t`, Gold dimensions, and
-`fact_order_items`:
+**17 tests total** — 15 generic tests declared in `properties.yml`, plus 2
+singular tests in `tests/`.
+
+### Generic tests (`properties.yml`)
 
 | Layer | Model | Column | Test |
 |---|---|---|---|
@@ -610,7 +612,22 @@ dedup) rather than `DISTINCT` on the OBT.
 | Silver (`silver_t`) | `products_t` | `price` | `dbt_utils.expression_is_true(>= 0)` |
 | Silver (`silver_t`) | `orders_t` | `order_id` | `not_null`, `unique` |
 
-Key conventions:
+### Singular tests (`tests/`)
+
+| File | Target | What it checks | Severity |
+|---|---|---|---|
+| `assert_obt_b_employee_id_unique.sql` | `obt_b` | `employee_id` has no duplicates in the OBT | `error` |
+| `assert_obt_b_no_null_fks.sql` | `obt_b` | `order_id`, `product_id`, `employee_id`, `store_id`, `order_item_id`, `customer_id` are all non-null in the OBT | `warn` |
+
+The first singular test catches the fan-out failure mode directly: if any of
+the six `LEFT JOIN`s in `obt_b` produces more than one row per order,
+`employee_id` will duplicate and the test fails loudly. The second is set to
+`warn` rather than `error` on purpose — `obt_b` is built with `LEFT JOIN`s,
+so a NULL foreign key is a *legitimate* state (e.g. an order with no matching
+employee), but the test still surfaces it so unexpected NULL rates don't go
+unnoticed.
+
+### Key conventions
 
 - **`unique` + `not_null` on every business key** — the baseline every
   dimension and fact must pass.
@@ -621,6 +638,8 @@ Key conventions:
 - **Dimension uniqueness enforced in SQL** (via `qualify row_number()`), then
   spot-checked with `GROUP BY ... HAVING COUNT(*) > 1` rather than relying
   on `DISTINCT`.
+- **OBT-level structural tests** (singular) catch join fan-out and NULL
+  foreign keys that generic column tests wouldn't see.
 
 Run all tests:
 
@@ -671,5 +690,4 @@ dbt test
 ## Reference
 
 - Course / inspiration: [Walmart End-to-End Data Pipeline (YouTube)](https://www.youtube.com/watch?v=ZEE-jNAthB0&t=27s)
-
 
