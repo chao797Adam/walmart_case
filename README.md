@@ -1,14 +1,8 @@
 # Walmart End-to-End Data Pipeline
 
-An end-to-end ELT pipeline that ingests a Walmart retail dataset (originally
-sourced from PostgreSQL, now a static CSV snapshot — see
-[Source](#source-csv-in-volume-not-a-live-postgres-connection)) into
-Databricks, transforms it through a Bronze → Silver → Gold lakehouse architecture
-with **dbt**, orchestrates everything with **Airflow**, and models SCD Type 2
-history for the core dimensions.
+An end-to-end ELT pipeline that ingests a Walmart retail dataset (a static CSV snapshot stored in a Databricks Volume — see [Source](#source-csv-in-volume)) into Databricks, transforms it through a Bronze → Silver → Gold lakehouse architecture with **dbt**, orchestrates everything with **Airflow**, and models SCD Type 2 history for the core dimensions.
 
-> Built as a learning project following an online course, but with several
-> deliberate design changes (see [Design Decisions](#design-decisions)).
+> Built as a learning project following an online course, but with several deliberate design changes (see [Design Decisions](#design-decisions)).
 
 ---
 
@@ -16,7 +10,7 @@ history for the core dimensions.
 
 | Layer           | Tool                                                                        |
 | --------------- | --------------------------------------------------------------------------- |
-| Source database | Static CSV snapshot of the Walmart dataset, uploaded to a Databricks Volume (originally exported from a Ghost-hosted PostgreSQL instance, since decommissioned — see [Source: CSV in Volume, not a live Postgres connection](#source-csv-in-volume-not-a-live-postgres-connection)) |
+| Source          | Static CSV snapshot of the Walmart dataset, uploaded to a Databricks Volume |
 | Ingestion       | Per-table **Auto Loader** (`cloudFiles`) streams, file-level incremental, parameterized via Databricks widgets |
 | Lakehouse       | **Databricks** (Unity Catalog: `bronze` / `silver_t` / `silver_b` / `gold`) |
 | Transformation  | **dbt** (incremental models, OBT, snapshots, tests)                         |
@@ -43,9 +37,7 @@ flowchart TD
    (`orders`, `customers`, `products`, `order_items`, `stores`, `employees`),
    uploaded to a raw Volume. Each row still carries `updated_timestamp` and
    `created_timestamp` fields baked into the CSV itself, which is what makes
-   row-level CDC possible downstream in Silver — see
-   [Source: CSV in Volume, not a live Postgres connection](#source-csv-in-volume-not-a-live-postgres-connection)
-   for why this project doesn't connect to Postgres directly.
+   row-level CDC possible downstream in Silver.
 2. **Bronze** — A per-table Auto Loader (`cloudFiles`) stream, driven by a
    parameterized notebook (`dbutils.widgets`), ingests new files
    from the raw Volume into `bronze.*`. See
@@ -108,8 +100,7 @@ walmart_proj/
 - Docker + Docker Compose
 - A Databricks workspace with:
   - A SQL warehouse or cluster
-  - A Job that ingests Postgres → Bronze
-- A PostgreSQL source (or access to the hosted Walmart dataset)
+  - A Job that ingests the raw Volume → Bronze
 - Python 3.10+ (only if running dbt locally)
 
 ### 1. Clone & configure
@@ -127,7 +118,6 @@ DATABRICKS_HOST=https://<your-workspace>.cloud.databricks.com
 DATABRICKS_TOKEN=dapiXXXXXXXXXXXXXXXXXXXX
 DATABRICKS_JOB_ID=123456789
 DATABRICKS_HTTP_PATH=/sql/1.0/warehouses/xxxxxxxx
-POSTGRES_URL=postgresql://user:pass@host:5432/walmart
 ```
 
 dbt profile (`~/.dbt/profiles.yml`):
@@ -186,7 +176,7 @@ notebooks:
 dbutils.widgets.text("table_name", "", "Table Name")
 table_name = dbutils.widgets.get("table_name").strip()
 
-print(f"=== 正在独立运行表: {table_name} 的 Bronze 摄入流 ===")
+print(f"=== Running Bronze ingestion stream for table: {table_name} ===")
 
 df = spark.readStream.format("cloudFiles") \
     .option("cloudFiles.format", "csv") \
@@ -207,13 +197,13 @@ print(f"✅ batchId      : {prog.get('batchId') if prog else None}")
 
 # Table's total row count after this run
 total = spark.sql(f"SELECT COUNT(*) FROM walmart.bronze.{table_name}").collect()[0][0]
-print(f"✅ 表当前总行数 : {total}")
+print(f"✅ Total rows in table : {total}")
 
 # Rows written by this specific run, from Delta's own commit history
 hist = spark.sql(f"DESCRIBE HISTORY walmart.bronze.{table_name} LIMIT 1").collect()[0]
 metrics = hist["operationMetrics"] or {}
-print(f"✅ 本次写入行数 : {metrics.get('numOutputRows', 'N/A')}")
-print(f"✅ operation    : {hist['operation']}")
+print(f"✅ Rows written this run : {metrics.get('numOutputRows', 'N/A')}")
+print(f"✅ operation            : {hist['operation']}")
 ```
 
 Currently this notebook is run **manually, six times** — the `table_name`
@@ -360,15 +350,13 @@ hardcoded.
 
 ## Design Decisions
 
-### Source: CSV in Volume, not a live Postgres connection
+### Source: CSV in Volume
 
-The course this project follows connects directly to a Ghost-hosted
-PostgreSQL instance and pulls rows with `updated_timestamp > last_checkpoint`
-as a true row-level CDC read against a live database. **That Ghost Postgres
-instance is no longer available** (Ghost's free/trial hosting for this
-dataset has since been decommissioned), so this project's actual Bronze
-ingestion works differently: a static CSV snapshot of the same Walmart
-dataset was exported once and uploaded to a raw Volume
+The course this project follows connects directly to a live database and
+pulls rows with `updated_timestamp > last_checkpoint` as a true row-level
+CDC read. **That live source is not used in this project.** Instead, a
+static CSV snapshot of the same Walmart dataset was exported once and
+uploaded to a raw Volume
 (`/Volumes/walmart/raw/rawvolume/{table_name}/`), and Bronze ingestion reads
 from there via Auto Loader (see
 [Bronze Ingestion](#bronze-ingestion-auto-loader-file-level-incremental)).
@@ -380,12 +368,12 @@ connection — `silver_t` models can still filter
 `where updated_timestamp > max(updated_timestamp)` correctly. What's
 different is only *how new data arrives at Bronze* (Auto Loader watching a
 Volume for new/changed files, file-level) versus what the original design
-assumed (a live Postgres connection pulling rows directly, row-level). If
-this pipeline needed to run against a genuinely live, continuously-updating
-source again, the Postgres connection would need to be re-established —
-either back through Ghost or another hosted instance, or via Databricks'
-native Lakeflow Connect ingestion for Postgres — rather than continuing to
-re-upload static CSV snapshots to the Volume by hand.
+assumed (a live database pulling rows directly, row-level). If this pipeline
+needed to run against a genuinely live, continuously-updating source again,
+the ingestion layer would need to be re-established — either via a hosted
+database, Databricks' native Lakeflow Connect ingestion, or another
+row-level CDC mechanism — rather than continuing to re-upload static CSV
+snapshots to the Volume by hand.
 
 ### `qualify row_number() = 1` on every `silver_t` model — not optional
 
@@ -415,7 +403,7 @@ qualify
 partitioned by that table's own key (`order_id` for `orders_t`, `product_id`
 for `products_t`, and so on) — not copy-pasted from another table's key.
 
-
+### Dimensions are built from `silver_t`, not from the OBT
 
 The course builds dimensions like `dim_customers` by `SELECT DISTINCT` from the
 OBT. This project deliberately does not, for two reasons:
@@ -620,6 +608,6 @@ dbt test
 
 ---
 
-## Credits
+## Reference
 
 - Course / inspiration: [Walmart End-to-End Data Pipeline (YouTube)](https://www.youtube.com/watch?v=ZEE-jNAthB0&t=27s)
