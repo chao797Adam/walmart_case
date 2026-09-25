@@ -212,6 +212,21 @@ already seen, and only keep the latest version of each one."
 > it. This doesn't affect incrementality — `checkpointLocation` is what drives
 > incremental loading, not where the table's data physically lives.
 
+### Incrementality at a glance
+
+Each layer has a well-defined notion of "what's new," and they are not the
+same thing. Reading the table left-to-right is the fastest way to understand
+why two `row_number() = 1` dedup steps appear in the pipeline and what each
+one is protecting against.
+
+| Layer         | Unit of incrementality        | Dedup?                | Driven by                                              |
+| ------------- | ----------------------------- | --------------------- | ------------------------------------------------------ |
+| Bronze        | **Files** under raw Volume    | ❌ (append-only)       | `checkpointLocation`                                   |
+| Silver_t      | **Rows** (`updated_timestamp`)| ✅ `qualify rn = 1`    | `is_incremental()` + `unique_key` → `MERGE`            |
+| Silver_b      | Full rebuild (table)          | Inherited from Silver_t | `LEFT JOIN` over all six `silver_t`                    |
+| Gold dims     | **Rows** + table state        | ✅ `qualify rn = 1`    | `is_incremental()` + `unique_key` → `MERGE`            |
+| Snapshots     | **Row changes**               | SCD2 (`dbt_valid_*`)  | `dbt snapshot`, `timestamp` strategy                   |
+
 ### Verifying Bronze row counts across all six tables
 
 ```sql
@@ -314,7 +329,7 @@ hardcoded.
 
 ## Design Decisions
 
-### `qualify row_number() = 1` on every `silver_t` model — not optional
+### `qualify row_number() = 1` on every `silver_t` model — required by the chosen materialization
 
 All six `silver_t` models (`orders_t`, `customers_t`, `products_t`,
 `order_items_t`, `stores_t`, `employees_t`) are `materialized='incremental'`
@@ -342,7 +357,15 @@ qualify
 partitioned by that table's own key (`order_id` for `orders_t`, `product_id`
 for `products_t`, and so on) — not copy-pasted from another table's key.
 
+> **On the word "required":** the dedup is required *given that these models
+> are `incremental` with a `unique_key`*, because dbt-databricks emits a
+> `MERGE` and `MERGE` cannot accept duplicate keys on the source side. It is
+> not a general SQL requirement — a full-refresh `table` model would not fail
+> without it. The framing here is deliberate: the dedup exists because of the
+> materialization choice, not because the data "needs deduping" in the
+> abstract.
 
+### Dimensions are built from `silver_t`, not from the OBT
 
 The course builds dimensions like `dim_customers` by `SELECT DISTINCT` from the
 OBT. This project deliberately does not, for two reasons:
@@ -439,7 +462,22 @@ elsewhere in this project, e.g. `fact_order_items`'s incremental merge, the
 same `MERGE`-based upsert pattern exists but isn't called "SCD1," because
 SCD is a dimensional-modeling term and a fact table isn't a dimension. Here
 it *is* a dimension, and it *does* overwrite without history, so "SCD1"
-applies correctly.)
+applies correctly. The *mechanism* is identical in both cases — `MERGE` keyed
+on `unique_key`; only the *name* changes, and it changes precisely because
+the target is a dimension rather than a fact.)
+
+> **Why `qualify row_number() = 1` is still here, given that Silver already dedupes.**
+> Same reason as in `silver_t`: `materialized='incremental'` with
+> `unique_key='customer_id'` produces a `MERGE`, and `MERGE` cannot accept a
+> source batch with duplicate keys. Silver's own dedup only guarantees that
+> *Silver's output at the moment it ran* was one row per key — it says nothing
+> about what the Silver table looks like *now*, after whatever history, manual
+> fixes, or late-arriving `updated_timestamp` values have touched it since. The
+> `qualify` here is both a correctness guard (one row per key in the output)
+> and a load-bearing precondition for the `MERGE` to run at all. It is cheap
+> (one window function over this run's incremental slice), and it makes
+> `dim_customers` self-defending rather than trusting an invariant it cannot
+> verify at runtime.
 
 ### SCD1 Gold vs. SCD2 Snapshots: why both
 
@@ -550,3 +588,5 @@ dbt test
 ## Credits
 
 - Course / inspiration: [Walmart End-to-End Data Pipeline (YouTube)](https://www.youtube.com/watch?v=ZEE-jNAthB0&t=27s)
+```
+
