@@ -331,6 +331,16 @@ hardcoded.
 
 ### `qualify row_number() = 1` on every `silver_t` model — required by the chosen materialization
 
+> **Why a `MERGE` is generated at all.** On dbt-databricks,
+> `materialized='incremental'` combined with a `unique_key` defaults to
+> `incremental_strategy='merge'`, which is what causes dbt to emit a Delta
+> `MERGE` statement on every incremental run. (This default is
+> adapter-specific — other adapters may default to `append` or
+> `delete+insert` — but it is the behavior this project relies on, so it is
+> the one documented here.) Everything below about "the incoming batch must
+> be unique on the key" follows from that one adapter default, not from dbt
+> at large.
+
 All six `silver_t` models (`orders_t`, `customers_t`, `products_t`,
 `order_items_t`, `stores_t`, `employees_t`) are `materialized='incremental'`
 with a `unique_key`, which means dbt-databricks generates a `MERGE` statement
