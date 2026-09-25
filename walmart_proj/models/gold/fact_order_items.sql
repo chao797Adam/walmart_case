@@ -1,14 +1,11 @@
--- models/gold/fct_order_items.sql
--- verify first %sql
--- select order_item_id, count(*) from walmart.silver_t.order_items_t group by 1
--- having count(*) > 1
 {{
   config(
-    materialized='table',
+    materialized='incremental',
+    unique_key='order_item_id',
+    merge_update_columns=['order_id','product_id','quantity','unit_price','line_amount','updated_timestamp','is_active','processed_at','fct_processed_at'],
     tags=['gold', 'fct']
   )
 }}
-
 with
     base_order_items as (
         select
@@ -23,6 +20,13 @@ with
             is_active,
             processed_at
         from {{ ref('order_items_t') }}
+        {% if is_incremental() %}
+            where
+                updated_timestamp > (
+                    select coalesce(max(updated_timestamp), timestamp '1900-01-01')
+                    from {{ this }}
+                )
+        {% endif %}
     )
 
 select
@@ -38,3 +42,5 @@ select
     processed_at,
     current_timestamp() as fct_processed_at
 from base_order_items
+qualify
+    row_number() over (partition by order_item_id order by updated_timestamp desc) = 1

@@ -1,12 +1,12 @@
--- models/gold/dim_stores.sql
 {{
   config(
-    materialized='table',
+    materialized='incremental',
+    unique_key='store_id',
+    merge_update_columns=['store_name','city','province','country','updated_timestamp','is_active','processed_at','store_gold_processed_at'],
     alias='dim_stores',
     tags=['gold', 'dim']
   )
 }}
-
 with
     base_stores as (
         select
@@ -20,6 +20,13 @@ with
             is_active,
             processed_at
         from {{ ref('stores_t') }}
+        {% if is_incremental() %}
+            where
+                updated_timestamp > (
+                    select coalesce(max(updated_timestamp), timestamp '1900-01-01')
+                    from {{ this }}
+                )
+        {% endif %}
     )
 
 select

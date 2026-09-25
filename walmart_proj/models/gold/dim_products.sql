@@ -1,12 +1,12 @@
--- models/gold/dim_products.sql
 {{
   config(
-    materialized='table',
+    materialized='incremental',
+    unique_key='product_id',
+    merge_update_columns=['product_name','category','brand','price','updated_timestamp','is_active','processed_at','product_gold_processed_at'],
     alias='dim_products',
     tags=['gold', 'dim']
   )
 }}
-
 with
     base_products as (
         select
@@ -20,6 +20,13 @@ with
             is_active,
             processed_at
         from {{ ref('products_t') }}
+        {% if is_incremental() %}
+            where
+                updated_timestamp > (
+                    select coalesce(max(updated_timestamp), timestamp '1900-01-01')
+                    from {{ this }}
+                )
+        {% endif %}
     )
 
 select

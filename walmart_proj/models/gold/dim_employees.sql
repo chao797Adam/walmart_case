@@ -1,7 +1,8 @@
--- models/gold/dim_employees.sql
 {{
   config(
-    materialized='table',
+    materialized='incremental',
+    unique_key='employee_id',
+    merge_update_columns=['store_id','first_name','last_name','email','job_title','salary','updated_timestamp','is_active','processed_at','employee_gold_processed_at'],
     alias='dim_employees',
     tags=['gold', 'dim']
   )
@@ -21,6 +22,13 @@ with
             is_active,
             processed_at
         from {{ ref('employees_t') }}
+        {% if is_incremental() %}
+            where
+                updated_timestamp > (
+                    select coalesce(max(updated_timestamp), timestamp '1900-01-01')
+                    from {{ this }}
+                )
+        {% endif %}
     )
 
 select
