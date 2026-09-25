@@ -716,6 +716,10 @@ dbt test
 
 ### Silver (`silver_t`) — type casting
 
+| # | Deviation | Why |
+|---|---|---|
+| 5 | Explicit `cast` on every non-text column in `silver_t` | Source is CSV (all `string`); without casting, `MERGE ON id` is unsafe and numeric aggregation silently fails |
+
 The reference tutorial reads from PostgreSQL, where column types are
 declared in the source schema (`customer_id` is `int`, `updated_timestamp`
 is `timestamp`). Its `silver_t`-equivalent models inherit those types for
@@ -741,16 +745,16 @@ silently produce wrong results.
 
 | # | Deviation | Why |
 |---|---|---|
-| 5 | `fact_order_items` built directly from `order_items_t`, not from the OBT | OBT has order → order_items fan-out; facts would inherit duplicated rows |
-| 6 | No separate order-grain fact table | `fact_orders.sql` (line-item grain mislabeled) and `eph_orders.sql` (broken `DISTINCT` on OBT) are both documented and slated for removal |
+| 6 | `fact_order_items` built directly from `order_items_t`, not from the OBT | OBT has order → order_items fan-out; facts would inherit duplicated rows |
+| 7 | No separate order-grain fact table | `fact_orders.sql` (line-item grain mislabeled) and `eph_orders.sql` (broken `DISTINCT` on OBT) are both documented and slated for removal |
 
 ### Gold — Dimensions
 
 | # | Deviation | Why |
 |---|---|---|
-| 7 | Dimensions built from `silver_t`, not `SELECT DISTINCT` on the OBT | `DISTINCT` can't collapse fan-out, and audit columns break it |
-| 8 | Dimensions are `incremental`, not `table` | `silver_t` is append-only row versions; a full rebuild re-scans unbounded history |
-| 9 | SCD1 gold dimensions and SCD2 snapshots both exist | "current" vs "historical" are different query patterns |
+| 8 | Dimensions built from `silver_t`, not `SELECT DISTINCT` on the OBT | `DISTINCT` can't collapse fan-out, and audit columns break it |
+| 9 | Dimensions are `incremental`, not `table` | `silver_t` is append-only row versions; a full rebuild re-scans unbounded history |
+| 10 | SCD1 gold dimensions and SCD2 snapshots both exist | "current" vs "historical" are different query patterns |
 
 ---
 
