@@ -1,6 +1,8 @@
 # Walmart End-to-End Data Pipeline
 
-An end-to-end ELT pipeline that syncs a PostgreSQL (Walmart dataset) source into
+An end-to-end ELT pipeline that ingests a Walmart retail dataset (originally
+sourced from PostgreSQL, now a static CSV snapshot — see
+[Source](#source-csv-in-volume-not-a-live-postgres-connection)) into
 Databricks, transforms it through a Bronze → Silver → Gold lakehouse architecture
 with **dbt**, orchestrates everything with **Airflow**, and models SCD Type 2
 history for the core dimensions.
@@ -14,8 +16,8 @@ history for the core dimensions.
 
 | Layer           | Tool                                                                        |
 | --------------- | --------------------------------------------------------------------------- |
-| Source database | PostgreSQL (hosted, Walmart dataset)                                        |
-| Ingestion       | Batch CDC via **Databricks Jobs** (cursor: `updated_timestamp`)             |
+| Source database | Static CSV snapshot of the Walmart dataset, uploaded to a Databricks Volume (originally exported from a Ghost-hosted PostgreSQL instance, since decommissioned — see [Source: CSV in Volume, not a live Postgres connection](#source-csv-in-volume-not-a-live-postgres-connection)) |
+| Ingestion       | Per-table **Auto Loader** (`cloudFiles`) streams, file-level incremental, parameterized via Databricks widgets |
 | Lakehouse       | **Databricks** (Unity Catalog: `bronze` / `silver_t` / `silver_b` / `gold`) |
 | Transformation  | **dbt** (incremental models, OBT, snapshots, tests)                         |
 | Orchestration   | **Apache Airflow** (Docker Compose, Databricks SDK)                         |
@@ -27,7 +29,7 @@ history for the core dimensions.
 
 ```mermaid
 flowchart TD
-    A["PostgreSQL - Walmart source"] -->|"batch CDC via updated_timestamp"| B["Bronze - raw tables in Databricks"]
+    A["Raw CSV files in a Databricks Volume"] -->|"Auto Loader (cloudFiles), file-level, per-table"| B["Bronze - raw tables in Databricks"]
     B -->|"dbt incremental"| C["Silver_t - cleaned per-table models"]
     C -->|"dbt table model - LEFT JOIN x6"| D["Silver_b - One Big Table"]
     C -->|"dbt table models"| E["Gold - facts + dimensions"]
@@ -37,10 +39,16 @@ flowchart TD
 
 **Flow summary**
 
-1. **Source** — PostgreSQL holds the raw Walmart dataset
-   (`orders`, `customers`, `products`, `order_items`, `stores`, `employees`).
-2. **Bronze** — A per-table Auto Loader (`cloudFiles`) stream ingests new files
-   from a raw Volume into `bronze.*`. See
+1. **Source** — a static CSV snapshot of the Walmart dataset
+   (`orders`, `customers`, `products`, `order_items`, `stores`, `employees`),
+   uploaded to a raw Volume. Each row still carries `updated_timestamp` and
+   `created_timestamp` fields baked into the CSV itself, which is what makes
+   row-level CDC possible downstream in Silver — see
+   [Source: CSV in Volume, not a live Postgres connection](#source-csv-in-volume-not-a-live-postgres-connection)
+   for why this project doesn't connect to Postgres directly.
+2. **Bronze** — A per-table Auto Loader (`cloudFiles`) stream, driven by a
+   parameterized notebook (`dbutils.widgets`), ingests new files
+   from the raw Volume into `bronze.*`. See
    [Bronze Ingestion](#bronze-ingestion-auto-loader-file-level-incremental) below —
    this is **file-level** incrementality, distinct from the row-level CDC that
    happens one layer up, in Silver.
@@ -170,22 +178,50 @@ dbt run  --select gold/fact
 
 ## Bronze Ingestion: Auto Loader (file-level incremental)
 
-Each source table is loaded into Bronze with a per-table Auto Loader
-(`cloudFiles`) stream, triggered `once` per Databricks Job run:
+Each source table is loaded into Bronze by the **same notebook, parameterized**
+by table name via a Databricks widget, rather than six separate hardcoded
+notebooks:
 
 ```python
+dbutils.widgets.text("table_name", "", "Table Name")
+table_name = dbutils.widgets.get("table_name").strip()
+
+print(f"=== 正在独立运行表: {table_name} 的 Bronze 摄入流 ===")
+
 df = spark.readStream.format("cloudFiles") \
     .option("cloudFiles.format", "csv") \
     .option("cloudFiles.schemaLocation", f"/Volumes/walmart/bronze/bronzevolume/{table_name}/checkpoint") \
     .option("cloudFiles.schemaEvolutionMode", "rescue") \
     .load(f"/Volumes/walmart/raw/rawvolume/{table_name}/")
 
-df.writeStream.format("delta") \
+query = df.writeStream.format("delta") \
     .outputMode("append") \
     .trigger(once=True) \
     .option("checkpointLocation", f"/Volumes/walmart/bronze/bronzevolume/{table_name}/checkpoint") \
     .toTable(f"walmart.bronze.{table_name}")
+
+query.awaitTermination()
+
+prog = query.lastProgress
+print(f"✅ batchId      : {prog.get('batchId') if prog else None}")
+
+# Table's total row count after this run
+total = spark.sql(f"SELECT COUNT(*) FROM walmart.bronze.{table_name}").collect()[0][0]
+print(f"✅ 表当前总行数 : {total}")
+
+# Rows written by this specific run, from Delta's own commit history
+hist = spark.sql(f"DESCRIBE HISTORY walmart.bronze.{table_name} LIMIT 1").collect()[0]
+metrics = hist["operationMetrics"] or {}
+print(f"✅ 本次写入行数 : {metrics.get('numOutputRows', 'N/A')}")
+print(f"✅ operation    : {hist['operation']}")
 ```
+
+Currently this notebook is run **manually, six times** — the `table_name`
+widget value is changed by hand and the notebook re-run for each of
+`orders`, `customers`, `products`, `order_items`, `stores`, `employees`. This
+is a known gap: the natural next step is a Databricks Job with a `for_each`
+task (looping the same notebook task over the six table names automatically)
+rather than six manual re-runs — not yet implemented in this project.
 
 **This is file-level incrementality, not row-level CDC.** Auto Loader's
 `checkpointLocation` tracks which *files* under
@@ -212,21 +248,6 @@ already seen, and only keep the latest version of each one."
 > it. This doesn't affect incrementality — `checkpointLocation` is what drives
 > incremental loading, not where the table's data physically lives.
 
-### Incrementality at a glance
-
-Each layer has a well-defined notion of "what's new," and they are not the
-same thing. Reading the table left-to-right is the fastest way to understand
-why two `row_number() = 1` dedup steps appear in the pipeline and what each
-one is protecting against.
-
-| Layer         | Unit of incrementality        | Dedup?                | Driven by                                              |
-| ------------- | ----------------------------- | --------------------- | ------------------------------------------------------ |
-| Bronze        | **Files** under raw Volume    | ❌ (append-only)       | `checkpointLocation`                                   |
-| Silver_t      | **Rows** (`updated_timestamp`)| ✅ `qualify rn = 1`    | `is_incremental()` + `unique_key` → `MERGE`            |
-| Silver_b      | Full rebuild (table)          | Inherited from Silver_t | `LEFT JOIN` over all six `silver_t`                    |
-| Gold dims     | **Rows** + table state        | ✅ `qualify rn = 1`    | `is_incremental()` + `unique_key` → `MERGE`            |
-| Snapshots     | **Row changes**               | SCD2 (`dbt_valid_*`)  | `dbt snapshot`, `timestamp` strategy                   |
-
 ### Verifying Bronze row counts across all six tables
 
 ```sql
@@ -247,6 +268,16 @@ order by table_name;
 One query across all six Bronze tables, rather than checking each table
 individually, to confirm every Auto Loader stream actually landed data
 before trusting downstream Silver/Gold builds on top of it.
+
+### Verifying Bronze idempotency
+
+To confirm the Auto Loader streams are safe to re-run without duplicating
+data, the same ingestion notebook was executed twice in a row for a given
+`table_name`, with no new files added to the raw Volume between runs. The
+`UNION ALL` row-count query above returned identical totals both times —
+confirming `checkpointLocation` correctly recognized the files as already
+processed on the second run and skipped them, rather than re-ingesting and
+duplicating them.
 
 ---
 
@@ -329,17 +360,34 @@ hardcoded.
 
 ## Design Decisions
 
-### `qualify row_number() = 1` on every `silver_t` model — required by the chosen materialization
+### Source: CSV in Volume, not a live Postgres connection
 
-> **Why a `MERGE` is generated at all.** On dbt-databricks,
-> `materialized='incremental'` combined with a `unique_key` defaults to
-> `incremental_strategy='merge'`, which is what causes dbt to emit a Delta
-> `MERGE` statement on every incremental run. (This default is
-> adapter-specific — other adapters may default to `append` or
-> `delete+insert` — but it is the behavior this project relies on, so it is
-> the one documented here.) Everything below about "the incoming batch must
-> be unique on the key" follows from that one adapter default, not from dbt
-> at large.
+The course this project follows connects directly to a Ghost-hosted
+PostgreSQL instance and pulls rows with `updated_timestamp > last_checkpoint`
+as a true row-level CDC read against a live database. **That Ghost Postgres
+instance is no longer available** (Ghost's free/trial hosting for this
+dataset has since been decommissioned), so this project's actual Bronze
+ingestion works differently: a static CSV snapshot of the same Walmart
+dataset was exported once and uploaded to a raw Volume
+(`/Volumes/walmart/raw/rawvolume/{table_name}/`), and Bronze ingestion reads
+from there via Auto Loader (see
+[Bronze Ingestion](#bronze-ingestion-auto-loader-file-level-incremental)).
+
+This has one consequence worth being explicit about: **the row-level CDC
+cursor (`updated_timestamp`) still works in Silver**, because it's a field
+baked into the CSV data itself, not something derived from a live database
+connection — `silver_t` models can still filter
+`where updated_timestamp > max(updated_timestamp)` correctly. What's
+different is only *how new data arrives at Bronze* (Auto Loader watching a
+Volume for new/changed files, file-level) versus what the original design
+assumed (a live Postgres connection pulling rows directly, row-level). If
+this pipeline needed to run against a genuinely live, continuously-updating
+source again, the Postgres connection would need to be re-established —
+either back through Ghost or another hosted instance, or via Databricks'
+native Lakeflow Connect ingestion for Postgres — rather than continuing to
+re-upload static CSV snapshots to the Volume by hand.
+
+### `qualify row_number() = 1` on every `silver_t` model — not optional
 
 All six `silver_t` models (`orders_t`, `customers_t`, `products_t`,
 `order_items_t`, `stores_t`, `employees_t`) are `materialized='incremental'`
@@ -367,15 +415,7 @@ qualify
 partitioned by that table's own key (`order_id` for `orders_t`, `product_id`
 for `products_t`, and so on) — not copy-pasted from another table's key.
 
-> **On the word "required":** the dedup is required *given that these models
-> are `incremental` with a `unique_key`*, because dbt-databricks emits a
-> `MERGE` and `MERGE` cannot accept duplicate keys on the source side. It is
-> not a general SQL requirement — a full-refresh `table` model would not fail
-> without it. The framing here is deliberate: the dedup exists because of the
-> materialization choice, not because the data "needs deduping" in the
-> abstract.
 
-### Dimensions are built from `silver_t`, not from the OBT
 
 The course builds dimensions like `dim_customers` by `SELECT DISTINCT` from the
 OBT. This project deliberately does not, for two reasons:
@@ -472,22 +512,7 @@ elsewhere in this project, e.g. `fact_order_items`'s incremental merge, the
 same `MERGE`-based upsert pattern exists but isn't called "SCD1," because
 SCD is a dimensional-modeling term and a fact table isn't a dimension. Here
 it *is* a dimension, and it *does* overwrite without history, so "SCD1"
-applies correctly. The *mechanism* is identical in both cases — `MERGE` keyed
-on `unique_key`; only the *name* changes, and it changes precisely because
-the target is a dimension rather than a fact.)
-
-> **Why `qualify row_number() = 1` is still here, given that Silver already dedupes.**
-> Same reason as in `silver_t`: `materialized='incremental'` with
-> `unique_key='customer_id'` produces a `MERGE`, and `MERGE` cannot accept a
-> source batch with duplicate keys. Silver's own dedup only guarantees that
-> *Silver's output at the moment it ran* was one row per key — it says nothing
-> about what the Silver table looks like *now*, after whatever history, manual
-> fixes, or late-arriving `updated_timestamp` values have touched it since. The
-> `qualify` here is both a correctness guard (one row per key in the output)
-> and a load-bearing precondition for the `MERGE` to run at all. It is cheap
-> (one window function over this run's incremental slice), and it makes
-> `dim_customers` self-defending rather than trusting an invariant it cannot
-> verify at runtime.
+applies correctly.)
 
 ### SCD1 Gold vs. SCD2 Snapshots: why both
 
@@ -598,5 +623,3 @@ dbt test
 ## Credits
 
 - Course / inspiration: [Walmart End-to-End Data Pipeline (YouTube)](https://www.youtube.com/watch?v=ZEE-jNAthB0&t=27s)
-```
-
