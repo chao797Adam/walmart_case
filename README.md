@@ -638,7 +638,7 @@ for deduplication. See [Flow summary](#flow-summary) §5.
 Tests are split across two layers plus singular tests:
 
 - **Silver (`silver_t`)** — 25 generic tests declared in `properties.yml`, all passing.
-- **Gold (`dim_*`, `fact_*`)** — generic tests declared in a separate `properties.yml`, to be run once the Gold models are materialized.
+- **Gold (`dim_*`, `fact_*`)** — 22 generic tests declared in the Gold `properties.yml`, all passing.
 - **Singular tests** — 1 custom SQL test in `tests/`, targeting `obt_b`.
 
 ### Silver layer tests — 25 tests
@@ -700,6 +700,25 @@ Run:
 ```bash
 dbt test --select gold
 ```
+
+### Verifying Gold row counts against Silver
+
+To confirm Gold models didn't inflate or drop rows during the
+Silver → Gold transition, row counts were compared against the
+"deduplicated" Silver keys:
+
+| Gold table | Gold rows | Silver distinct keys |
+|---|---|---|
+| `dim_customers` | 2,000 | 2,000 |
+| `dim_employees` | 250 | 250 |
+| `dim_products` | 500 | 500 |
+| `dim_stores` | 25 | 25 |
+| `fact_order_items` | 30,021 | 30,021 |
+| `fact_orders` | 10,000 | 10,000 |
+
+All match. `fact_order_items`'s 30,021 rows equal the OBT row count
+exactly — expected, since the OBT's only remaining fan-out source is
+`order_items` after the `employees` join was removed.
 
 ### Singular tests (`tests/`)
 
