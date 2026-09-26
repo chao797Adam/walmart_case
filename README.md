@@ -25,7 +25,7 @@ An end-to-end ELT pipeline that ingests a Walmart retail dataset (a static CSV s
 flowchart TD
     A["Raw CSV files in a Databricks Volume"] -->|"Auto Loader (cloudFiles), file-level, per-table"| B["Bronze - raw tables in Databricks"]
     B -->|"dbt incremental"| C["Silver_t - cleaned per-table models"]
-    C -->|"dbt table model - LEFT JOIN x6"| D["Silver_b - One Big Table"]
+    C -->|"dbt table model - LEFT JOIN x5"| D["Silver_b - One Big Table"]
     C -->|"dbt table models"| E["Gold - facts + dimensions"]
     E -->|"dbt snapshot - timestamp strategy"| F["Snapshots - SCD Type 2 dimensions"]
     D -.->|"Airflow: dbt run"| E
@@ -47,7 +47,7 @@ flowchart TD
 3. **Silver_t** — One dbt **incremental model per table**, using
    `is_incremental()` + `updated_timestamp` as the cursor column.
 4. **Silver_b** — A single **One Big Table (OBT)**, built by `LEFT JOIN`-ing
-   all six `silver_t` tables around `orders`.
+   all five `silver_t` tables around `orders`.
 5. **Gold** —
    - **Facts** (`fact_order_items`) are built **directly from
      `silver_t`**, not from the OBT, to avoid inheriting the order → order_items
@@ -723,16 +723,12 @@ dbt test --select gold
 
 | File | Target | What it checks | Severity |
 |---|---|---|---|
-| `assert_obt_b_employee_id_unique.sql` | `obt_b` | `employee_id` has no duplicates in the OBT | `error` |
-| `assert_obt_b_no_null_fks.sql` | `obt_b` | `order_id`, `product_id`, `employee_id`, `store_id`, `order_item_id`, `customer_id` are all non-null in the OBT | `warn` |
+| `test_obt.sql` | `obt_b` | `order_id`, `product_id`, `store_id`, `order_item_id`, `customer_id` are all non-null in the OBT | `warn` |
 
-The first singular test catches the fan-out failure mode directly: if any of
-the six `LEFT JOIN`s in `obt_b` produces more than one row per order,
-`employee_id` will duplicate and the test fails loudly. The second is set to
-`warn` rather than `error` on purpose — `obt_b` is built with `LEFT JOIN`s,
-so a NULL foreign key is a *legitimate* state (e.g. an order with no matching
-employee), but the test still surfaces it so unexpected NULL rates don't go
-unnoticed.
+This test is set to `warn` rather than `error` on purpose — `obt_b` is built
+with `LEFT JOIN`s, so a NULL foreign key is a *legitimate* state (e.g. an
+order with no matching product), but the test still surfaces it so unexpected
+NULL rates don't go unnoticed.
 
 ### Cast validation before Silver
 
