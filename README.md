@@ -272,7 +272,6 @@ duplicating them.
 
 ## Orchestration (Airflow)
 
-
 The `orchestrate` DAG chains the whole flow into one observable pipeline:
 
 ```
@@ -710,6 +709,9 @@ Generic tests for the four dimensions and both facts
 - `not_null` on foreign keys and `relationships` from
   `fact_order_items.product_id → dim_products.product_id`.
 - `dbt_utils.accepted_range(min_value: 0)` on `fact_order_items.line_amount`.
+- `relationships` from `fact_orders.customer_id → dim_customers.customer_id`
+  and `fact_orders.store_id → dim_stores.store_id`, plus
+  `accepted_range(min_value: 0)` on `fact_orders.total_amount`.
 
 Run:
 
