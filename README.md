@@ -333,7 +333,7 @@ ingest_bronze
 
 | Task                       | What it does                                                                                                                        |
 | -------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
-| `ingest_bronze`            | Python `@task`: triggers the Databricks ingest Job via `WorkspaceClient.jobs.run_now()`, polls `get_run()` every 5s, raises on non-`SUCCESS`. The job itself runs a **file-level** Auto Loader stream, not row-level CDC — see [Bronze Ingestion](#bronze-ingestion-auto-loader-file-level-incremental). |
+| `ingest_bronze` | Python `@task`: triggers the `walmart ingest` Databricks Job via `WorkspaceClient.jobs.run_now()`, polls `get_run()` every 5s, raises on non-`SUCCESS`. The job runs a **file-level** Auto Loader stream, not row-level CDC — see [Bronze Ingestion](#bronze-ingestion-auto-loader-file-level-incremental). |
 | `clean_target`             | `@task.bash`: clears `target/` and `logs/` so stale compiled artifacts don't leak.                                                  |
 | `source_freshness`         | `dbt source freshness` — fail fast if Bronze is stale.                                                                              |
 | `silver_technical(_tests)` | `dbt run` + `dbt test` on `silver_t`.                                                                                               |
