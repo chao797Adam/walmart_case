@@ -864,7 +864,7 @@ dbt test
 
 ### Self-check notebook
 
-A [`walmart.ipynb`](./verification.ipynb) is committed to the repo. It
+A [`walmart.ipynb`](./walmart.ipynb) is committed to the repo. It
 contains one cell per layer — Bronze, Silver, Gold, Snapshots — printing row
 counts, plus the checks behind the two findings in
 [Design Decisions](#design-decisions):
