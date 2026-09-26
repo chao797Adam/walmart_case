@@ -3,7 +3,7 @@ snapshots:
     relation: ref('customers_t')
     config:
       schema: snapshots
-      database: walmart
+      catalog: walmart
       unique_key: customer_id
       strategy: timestamp
       updated_at: updated_timestamp

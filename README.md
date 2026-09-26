@@ -273,10 +273,11 @@ duplicating them.
 
 ## Orchestration (Airflow)
 
+
 The `orchestrate` DAG chains the whole flow into one observable pipeline:
 
 ```
-ingest_cdc
+ingest_bronze
   → clean_target
   → source_freshness
   → silver_technical
@@ -284,24 +285,23 @@ ingest_cdc
   → silver_business
   → silver_business_tests
   → gold
-  → gold_dimensions
-  → gold_facts
+  → snapshots
 ```
 
 | Task                       | What it does                                                                                                                        |
 | -------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
-| `ingest_cdc`               | Python `@task`: triggers the Databricks ingest Job via `WorkspaceClient.jobs.run_now()`, polls `get_run()` every 5s, raises on non-`SUCCESS`. |
+| `ingest_bronze`            | Python `@task`: triggers the Databricks ingest Job via `WorkspaceClient.jobs.run_now()`, polls `get_run()` every 5s, raises on non-`SUCCESS`. The job itself runs a **file-level** Auto Loader stream, not row-level CDC — see [Bronze Ingestion](#bronze-ingestion-auto-loader-file-level-incremental). |
 | `clean_target`             | `@task.bash`: clears `target/` and `logs/` so stale compiled artifacts don't leak.                                                  |
 | `source_freshness`         | `dbt source freshness` — fail fast if Bronze is stale.                                                                              |
 | `silver_technical(_tests)` | `dbt run` + `dbt test` on `silver_t`.                                                                                               |
 | `silver_business(_tests)`  | `dbt run` + `dbt test` on `silver_b` (OBT).                                                                                         |
-| `gold`                     | `dbt run --select gold`.                                                                                                            |
-| `gold_dimensions`          | `dbt snapshot` — SCD2 for the four dimensions.                                                                                      |
-| `gold_facts`               | `dbt run --select gold/fact` — explicit final fact rebuild.                                                                         |
+| `gold`                     | `dbt run --select gold` — builds all four dimensions and both fact tables (`fact_orders`, `fact_order_items`).                     |
+| `snapshots`                | `dbt snapshot` — SCD2 history for the four dimensions.                                                                              |
 
 Tasks are chained with `>>` so a failure upstream (e.g. `source_freshness` or a
 Silver test) **blocks everything downstream** — Gold is never built on stale or
 broken Silver data.
+
 
 <details>
 <summary><b>Why the Databricks SDK instead of <code>DatabricksRunNowOperator</code>?</b></summary>
