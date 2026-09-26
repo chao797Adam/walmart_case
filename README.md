@@ -652,11 +652,11 @@ dedup) rather than `DISTINCT` on the OBT.
 
 ## Data Quality
 
-Tests are split across two layers plus a small set of singular tests:
+Tests are split across two layers plus singular tests:
 
 - **Silver (`silver_t`)** — 25 generic tests declared in `properties.yml`, all passing.
 - **Gold (`dim_*`, `fact_*`)** — generic tests declared in a separate `properties.yml`, to be run once the Gold models are materialized.
-- **Singular tests** — 2 custom SQL tests in `tests/`, targeting `obt_b`.
+- **Singular tests** — 1 custom SQL tests in `tests/`, targeting `obt_b`.
 
 ### Silver layer tests — 25 tests
 
