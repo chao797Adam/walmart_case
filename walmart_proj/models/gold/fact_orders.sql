@@ -20,6 +20,7 @@ select
     total_amount,
     is_active,
     processed_at,
+    updated_timestamp,
     current_timestamp() as fct_processed_at
 from {{ ref('orders_t') }}  --
 {% if is_incremental() %}

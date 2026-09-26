@@ -76,15 +76,20 @@ def orchestrate():
         bash_command='dbt run --select gold'  
     )
 
+    gold_tests = BashOperator(
+            task_id='gold_tests',
+            cwd='/opt/airflow/walmart_proj',
+            bash_command='dbt test --select gold'
+        )
+    
     snapshots = BashOperator(
         task_id='snapshots',
         cwd='/opt/airflow/walmart_proj',
         bash_command='dbt snapshot'  
     )
      
-
     ingest_bronze() >> silver_technical \
         >> silver_technical_tests >> silver_business >> silver_business_tests \
-        >> gold >> snapshots
+        >> gold >> gold_tests  >> snapshots
 
 orchestrate_dag = orchestrate()
