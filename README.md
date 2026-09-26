@@ -494,6 +494,44 @@ This keeps **facts, dimensions, and the OBT as independent, parallel outputs
 of the Silver layer** — no Gold model depends on another Gold/Silver-wide
 output.
 
+#### The OBT silently drops entities with no fact rows
+
+The two reasons above are about **row inflation** — the OBT has too *many*
+rows per entity. There is a symmetric problem in the other direction: the
+OBT has too *few* entities.
+
+Because `obt_b` is `orders`-centered, a customer who has never placed an
+order appears in `customers_t` but **not** in the OBT. Building
+`dim_customers` or `dim_customers_snapshot` from the OBT would silently
+drop those customers.
+
+This is measurable on the current dataset:
+
+| Source | Distinct `customer_id` |
+|---|---|
+| `customers_t` | **2,000** |
+| `obt_b` | **1,991** |
+| **Missing** | **9** |
+
+The 9 missing customers are exactly those with zero orders. Verified with:
+
+```sql
+select c.customer_id, c.first_name, c.last_name, c.email
+from walmart.silver_t.customers_t c
+left join (select distinct customer_id from walmart.silver_b.obt_b) o
+    on c.customer_id = o.customer_id
+where o.customer_id is null
+order by c.customer_id;
+```
+
+The query returns exactly 9 rows — Keith Jenkins, Joshua Le, Karen Robinson,
+and 6 others who have registered but never placed an order. They are real
+customers. Any dimension built from the OBT would lose them.
+
+Building dimensions from their own `silver_t` table (as this project does)
+avoids this entirely — a customer with no orders is still a customer, and
+the dimension should still track them.
+
 ### Gold Dimensions: SCD1, Incrementally
 
 `dim_customers` (and the other three dimensions) were initially built as a
@@ -856,7 +894,7 @@ silently produce wrong results.
 
 | # | Deviation | Why |
 |---|---|---|
-| 9 | Dimensions built from `silver_t`, not `SELECT DISTINCT` on the OBT | `DISTINCT` can't collapse fan-out, and audit columns break it |
+| 9 | Dimensions built from `silver_t`, not `SELECT DISTINCT` on the OBT | Three independent reasons: (a) `DISTINCT` can't collapse fan-out; (b) audit columns defeat `DISTINCT`; (c) the OBT is `orders`-centered, so it silently drops entities with no fact rows — 9 of 2,000 customers have zero orders and would be lost |
 | 10 | Dimensions are `incremental`, not `table` | `silver_t` is append-only row versions; a full rebuild re-scans unbounded history |
 | 11 | SCD1 gold dimensions and SCD2 snapshots both exist | "current" vs "historical" are different query patterns |
 
