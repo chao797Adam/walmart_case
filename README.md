@@ -49,9 +49,9 @@ flowchart TD
 4. **Silver_b** — A single **One Big Table (OBT)**, built by `LEFT JOIN`-ing
    all five `silver_t` tables around `orders`.
 5. **Gold** —
-   - **Facts** (`fact_order_items`) are built **directly from
-     `silver_t`**, not from the OBT, to avoid inheriting the order → order_items
-     row explosion.
+   - **Facts** — `fact_orders` (order-grain) and `fact_order_items`
+     (line-item grain) are both built **directly from `silver_t`**, not from
+     the OBT, to avoid inheriting the order → order_items row explosion.
    - **Dimensions** (`dim_customers`, `dim_products`, `dim_stores`,
      `dim_employees`) are also built from `silver_t`, each deduplicated with:
 
@@ -605,28 +605,10 @@ dimension tables (`dim_customers`, `dim_products`, `dim_stores`,
 > (`fact_orders.sql`, `fact_order_items.sql`); the `fct_*` name appears in
 > older test configs. Treat `fact_*` as canonical.
 
-### `fact_orders.sql` and `eph_orders.sql`: two flawed legacy models, both slated for removal
+### `eph_orders.sql`: a flawed legacy model from the tutorial, removed
 
-Two files in `models/gold/` were identified as leftovers from an earlier,
-abandoned approach — neither is a correct order-grain fact table, and neither
-is currently referenced by anything downstream:
-
-**`fact_orders.sql`** selects from `obt_b`:
-
-```sql
-SELECT order_id, order_item_id, product_id, store_id, employee_id,
-       customer_id, total_amount, quantity, unit_price, line_amount
-FROM {{ ref('obt_b') }}
-```
-
-Despite the name, this is **not order-grain** — it carries `order_item_id`,
-`product_id`, `quantity`, `unit_price`, `line_amount`, which makes it
-line-item grain, i.e. a rougher duplicate of `fact_order_items`, built from
-the fan-out-prone OBT instead of `order_items_t` directly. It has no `config`
-block (unlike every other Gold model in this project) and isn't covered by
-any test in `properties.yml` — all signs of an early, superseded attempt.
-
-**`eph_orders.sql`** tries to recover order grain from the OBT via `DISTINCT`:
+The tutorial's `eph_orders.sql` tried to recover order-grain rows from the
+OBT via `DISTINCT`:
 
 ```sql
 select distinct
@@ -642,16 +624,12 @@ This is exactly the anti-pattern already called out in
 `obt_b_processed_at` is a `current_timestamp()` audit column, which by
 definition can differ across the fanned-out rows for the same `order_id` —
 so `DISTINCT` here is structurally incapable of collapsing back to one row
-per order. This file doesn't just risk the same mistake described elsewhere
-in this README; it *is* that mistake, still present in the codebase.
+per order.
 
-**Resolution:** both files should be removed. There is currently no
-dedicated order-grain fact table in this project (order-level fields are
-only accessible today via `fact_order_items`, at line-item grain, or by
-querying `orders_t` directly). If an order-grain fact table is needed later,
-it should be built the same way `fact_order_items` is — directly from
-`orders_t`, with `qualify row_number()` (or reliance on `orders_t`'s own
-dedup) rather than `DISTINCT` on the OBT.
+**Resolution:** the file was removed. An order-grain fact table is now
+provided as **`fact_orders.sql`** — built **directly from `orders_t`** (not
+from the OBT), with `unique_key='order_id'` and `qualify row_number() = 1`
+for deduplication. See [Flow summary](#flow-summary) §5.
 
 ---
 
@@ -708,8 +686,8 @@ collapse into a single row above; the "25 tests" count is dbt's own
 
 ### Gold layer tests
 
-Generic tests for `dim_customers`, `dim_employees`, `dim_stores`,
-`dim_products`, and `fact_order_items` are declared in the Gold
+Generic tests for the four dimensions and both facts
+(`fact_orders`, `fact_order_items`) are declared in the Gold
 `properties.yml`. They cover:
 
 - `unique` + `not_null` on every dimension primary key.
@@ -834,8 +812,8 @@ silently produce wrong results.
 
 | # | Deviation | Why |
 |---|---|---|
-| 7 | `fact_order_items` built directly from `order_items_t`, not from the OBT | OBT has order → order_items fan-out; facts would inherit duplicated rows |
-| 8 | No separate order-grain fact table | `fact_orders.sql` (line-item grain mislabeled) and `eph_orders.sql` (broken `DISTINCT` on OBT) are both documented and slated for removal |
+| 7 | `fact_orders` (order-grain) and `fact_order_items` (line-item grain) both built directly from `silver_t`, not from the OBT | OBT has order → order_items fan-out; facts would inherit duplicated rows |
+| 8 | Two fact tables at different grains | Order-grain for per-order analysis (10,000 rows); line-item grain for per-product analysis (30,021 rows). Classic star-schema pattern |
 
 ### Gold — Dimensions
 
