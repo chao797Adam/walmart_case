@@ -443,6 +443,35 @@ In practice, snapshotting OBT-derived dimensions produced visibly more rows
 than the same snapshots built from `silver_t`, because the SCD2 `timestamp`
 strategy picked up spurious "changes" from the join.
 
+#### The OBT itself joins 5 tables, not 6
+
+The reference tutorial builds `obt_b` by joining six tables — `orders` plus
+`customers`, `order_items`, `products`, `stores`, and `employees`. This
+project joins **five**: `employees` is dropped.
+
+The reason is that `orders` has no `employee_id` column. The tutorial
+nonetheless joins `employees` via `store_id` (`o.store_id = e.store_id`),
+which fans out each order row by the number of employees at that store. Since
+there is no business relationship between a single order and "every employee
+at the store it was placed at", this fan-out adds no information — only rows.
+
+At this dataset's scale the effect is material: an OBT built on
+orders × order_items × employees can easily be **5× larger** than the same
+OBT without the `employees` join, with no analytical benefit. The join is
+therefore removed, and the OBT is built from five `silver_t` tables:
+
+```
+orders_t  (center)
+  ├── customers_t    (N : 1)
+  ├── order_items_t  (1 : N — one fan-out, unavoidable for line-item grain)
+  ├── products_t     (N : 1, via order_items.product_id)
+  └── stores_t       (N : 1)
+```
+
+If order-to-employee attribution is ever needed, it should be introduced at
+the **source** (add `employee_id` to the `orders` source), not inferred from
+`store_id` in the OBT.
+
 Instead, each dimension is built from its own `silver_t` table and deduplicated
 explicitly:
 
@@ -788,20 +817,26 @@ Without casting, `MERGE ON customer_id = ...` would compare strings, joins
 would fall back to string comparison, and numeric aggregations would
 silently produce wrong results.
 
+### Silver_b (OBT)
+
+| # | Deviation | Why |
+|---|---|---|
+| 6 | OBT joins 5 tables, not 6 — `employees` is excluded | Joining `employees` via `store_id` multiplies every order row by the number of employees at the store, with no business meaning (`orders` has no `employee_id`). At scale this 5× row inflation is not worth the (non-)information |
+
 ### Gold — Facts
 
 | # | Deviation | Why |
 |---|---|---|
-| 6 | `fact_order_items` built directly from `order_items_t`, not from the OBT | OBT has order → order_items fan-out; facts would inherit duplicated rows |
-| 7 | No separate order-grain fact table | `fact_orders.sql` (line-item grain mislabeled) and `eph_orders.sql` (broken `DISTINCT` on OBT) are both documented and slated for removal |
+| 7 | `fact_order_items` built directly from `order_items_t`, not from the OBT | OBT has order → order_items fan-out; facts would inherit duplicated rows |
+| 8 | No separate order-grain fact table | `fact_orders.sql` (line-item grain mislabeled) and `eph_orders.sql` (broken `DISTINCT` on OBT) are both documented and slated for removal |
 
 ### Gold — Dimensions
 
 | # | Deviation | Why |
 |---|---|---|
-| 8 | Dimensions built from `silver_t`, not `SELECT DISTINCT` on the OBT | `DISTINCT` can't collapse fan-out, and audit columns break it |
-| 9 | Dimensions are `incremental`, not `table` | `silver_t` is append-only row versions; a full rebuild re-scans unbounded history |
-| 10 | SCD1 gold dimensions and SCD2 snapshots both exist | "current" vs "historical" are different query patterns |
+| 9 | Dimensions built from `silver_t`, not `SELECT DISTINCT` on the OBT | `DISTINCT` can't collapse fan-out, and audit columns break it |
+| 10 | Dimensions are `incremental`, not `table` | `silver_t` is append-only row versions; a full rebuild re-scans unbounded history |
+| 11 | SCD1 gold dimensions and SCD2 snapshots both exist | "current" vs "historical" are different query patterns |
 
 ---
 
