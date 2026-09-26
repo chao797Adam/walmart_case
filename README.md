@@ -463,8 +463,13 @@ At this dataset's scale the effect is material. The measured row counts:
 | 6-table OBT (tutorial, with `employees`) | **300,513** |
 | 5-table OBT (this project) | 30,021 |
 
-The 6-table version is ~10× larger than the 5-table version (300,513 vs. 30,021 rows), entirely from a join that carries no order-level meaning. The join is therefore removed, and the OBT is built
-from five `silver_t` tables:
+The 6-table version is ~10× larger than the 5-table version (300,513 vs.
+30,021 rows), entirely from a join that carries no order-level meaning.
+
+At production scale (say, 10M orders), that same pattern would produce
+**300M rows instead of 30M** — a 10× difference in storage, scan cost,
+shuffle, and network I/O, for zero analytical value. This is why the OBT in
+this project joins 5 tables, not 6.
 
 ```
 orders_t  (center)
