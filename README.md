@@ -617,24 +617,71 @@ dedup) rather than `DISTINCT` on the OBT.
 
 ## Data Quality
 
-**17 tests total** — 15 generic tests declared in `properties.yml`, plus 2
-singular tests in `tests/`.
+Tests are split across two layers plus a small set of singular tests:
 
-### Generic tests (`properties.yml`)
+- **Silver (`silver_t`)** — 25 generic tests declared in `properties.yml`, all passing.
+- **Gold (`dim_*`, `fact_*`)** — generic tests declared in a separate `properties.yml`, to be run once the Gold models are materialized.
+- **Singular tests** — 2 custom SQL tests in `tests/`, targeting `obt_b`.
 
-| Layer | Model | Column | Test |
+### Silver layer tests — 25 tests
+
+Every `_t` model carries the same baseline: primary key `unique` + `not_null`,
+foreign keys `not_null`, referential integrity via `relationships`, and
+non-negativity checks on numeric columns.
+
+| # | Model | Column | Test |
 |---|---|---|---|
-| Gold (dim) | `dim_customers` | `customer_id` | `unique`, `not_null` |
-| Gold (dim) | `dim_employees` | `employee_id` | `unique`, `not_null` |
-| Gold (dim) | `dim_employees` | `store_id` | `not_null` |
-| Gold (dim) | `dim_stores` | `store_id` | `unique`, `not_null` |
-| Gold (dim) | `dim_products` | `product_id` | `unique`, `not_null` |
-| Gold (fact) | `fact_order_items` | `order_item_id` | `unique`, `not_null` |
-| Gold (fact) | `fact_order_items` | `order_id` | `not_null` |
-| Gold (fact) | `fact_order_items` | `product_id` | `not_null`, `relationships → dim_products.product_id` |
-| Gold (fact) | `fact_order_items` | `line_amount` | `dbt_utils.accepted_range(min_value: 0)` |
-| Silver (`silver_t`) | `products_t` | `price` | `dbt_utils.expression_is_true(>= 0)` |
-| Silver (`silver_t`) | `orders_t` | `order_id` | `not_null`, `unique` |
+| 1 | `customers_t` | `customer_id` | `unique`, `not_null` |
+| 2 | `orders_t` | `order_id` | `unique`, `not_null` |
+| 3 | `orders_t` | `customer_id` | `not_null` |
+| 4 | `orders_t` | `customer_id` | `relationships → customers_t.customer_id` |
+| 5 | `orders_t` | `store_id` | `not_null` |
+| 6 | `orders_t` | `store_id` | `relationships → stores_t.store_id` |
+| 7 | `orders_t` | `total_amount` | `dbt_utils.expression_is_true(>= 0)` |
+| 8 | `products_t` | `product_id` | `unique`, `not_null` |
+| 9 | `products_t` | `price` | `dbt_utils.expression_is_true(>= 0)` |
+| 10 | `order_items_t` | `order_item_id` | `unique`, `not_null` |
+| 11 | `order_items_t` | `order_id` | `not_null` |
+| 12 | `order_items_t` | `product_id` | `not_null` |
+| 13 | `order_items_t` | `quantity` | `dbt_utils.expression_is_true(> 0)` |
+| 14 | `order_items_t` | `unit_price` | `dbt_utils.expression_is_true(>= 0)` |
+| 15 | `order_items_t` | `line_amount` | `dbt_utils.expression_is_true(>= 0)` |
+| 16 | `stores_t` | `store_id` | `unique`, `not_null` |
+| 17 | `employees_t` | `employee_id` | `unique`, `not_null` |
+| 18 | `employees_t` | `store_id` | `not_null` |
+| 19 | `employees_t` | `salary` | `dbt_utils.expression_is_true(>= 0)` |
+
+Rows with more than one test (e.g. `unique` + `not_null` on the same column)
+collapse into a single row above; the "25 tests" count is dbt's own
+`TOTAL=` from the last `dbt test --select silver_t` run.
+
+**Conventions applied at the Silver layer:**
+
+- **Primary key** of every `_t` model → `unique` + `not_null`.
+- **Foreign keys** (`orders_t.customer_id`, `orders_t.store_id`,
+  `order_items_t.order_id`, `order_items_t.product_id`,
+  `employees_t.store_id`) → `not_null`.
+- **Referential integrity** for `orders_t.customer_id → customers_t.customer_id`
+  and `orders_t.store_id → stores_t.store_id` → `relationships`.
+- **Non-negativity** on amounts (`price`, `total_amount`, `unit_price`,
+  `line_amount`, `salary` ≥ 0) and **positivity** on `quantity` (> 0).
+
+### Gold layer tests
+
+Generic tests for `dim_customers`, `dim_employees`, `dim_stores`,
+`dim_products`, and `fact_order_items` are declared in the Gold
+`properties.yml`. They cover:
+
+- `unique` + `not_null` on every dimension primary key.
+- `not_null` on foreign keys and `relationships` from
+  `fact_order_items.product_id → dim_products.product_id`.
+- `dbt_utils.accepted_range(min_value: 0)` on `fact_order_items.line_amount`.
+
+Run:
+
+```bash
+dbt test --select gold
+```
 
 ### Singular tests (`tests/`)
 
