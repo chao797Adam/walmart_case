@@ -222,12 +222,50 @@ print(f"✅ Rows written this run : {metrics.get('numOutputRows', 'N/A')}")
 print(f"✅ operation            : {hist['operation']}")
 ```
 
-Currently this notebook is run **manually, six times** — the `table_name`
-widget value is changed by hand and the notebook re-run for each of
-`orders`, `customers`, `products`, `order_items`, `stores`, `employees`. This
-is a known gap: the natural next step is a Databricks Job with a `for_each`
-task (looping the same notebook task over the six table names automatically)
-rather than six manual re-runs — not yet implemented in this project.
+The notebook is **invoked by a Databricks Job** (`walmart ingest`) using a
+`for_each` task, which loops the same parameterized notebook over the six
+table names — `orders`, `customers`, `products`, `order_items`, `stores`,
+`employees` — in a single job run:
+
+```
+Task 1: ingest_list           → sets table_list = ["orders", ..., "employees"]
+                                    via dbutils.jobs.taskValues.set
+    ↓
+Task 2: ingest_all_tables     → For each
+    ├── inputs: {{tasks.ingest_list.values.table_list}}
+    └── inner task: bronze_ingest notebook
+            parameter: table_name = {{input}}
+```
+
+Each iteration invokes the same notebook once, so the notebook that was
+originally run manually six times is now driven by the Job's loop. The
+notebook does not need any modification — it was already parameterized via
+`dbutils.widgets`.
+
+### Verifying the Job
+
+The Job has been verified two ways:
+
+**1. Idempotency.** Running the Job twice in a row with no new raw files
+leaves all six Bronze tables unchanged — Auto Loader's `checkpointLocation`
+correctly recognizes already-ingested files and skips them.
+
+**2. Full rebuild.** Dropping all six Bronze tables plus their
+`checkpoint/` and `schema/` directories, then re-running the Job from
+scratch, produces **exactly the same row counts**:
+
+| Table | Row count |
+|---|---|
+| `orders` | 10,000 |
+| `customers` | 2,000 |
+| `products` | 500 |
+| `order_items` | 30,021 |
+| `stores` | 25 |
+| `employees` | 250 |
+
+This confirms that Bronze ingestion is both idempotent (re-runnable without
+duplication) and deterministic (rebuildable from raw files to identical
+results).
 
 **This is file-level incrementality, not row-level CDC.** Auto Loader's
 `checkpointLocation` tracks which *files* under
@@ -274,16 +312,6 @@ order by table_name;
 One query across all six Bronze tables, rather than checking each table
 individually, to confirm every Auto Loader stream actually landed data
 before trusting downstream Silver/Gold builds on top of it.
-
-### Verifying Bronze idempotency
-
-To confirm the Auto Loader streams are safe to re-run without duplicating
-data, the same ingestion notebook was executed twice in a row for a given
-`table_name`, with no new files added to the raw Volume between runs. The
-`UNION ALL` row-count query above returned identical totals both times —
-confirming `checkpointLocation` correctly recognized the files as already
-processed on the second run and skipped them, rather than re-ingesting and
-duplicating them.
 
 ---
 

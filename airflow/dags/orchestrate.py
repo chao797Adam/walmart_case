@@ -9,17 +9,17 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # schedule: 0 11 * * * every day at 11:00 AM
-# @dag(
-#     dag_id="orchestrate",
-#     schedule="0 11 * * *",
-#     catchup=False,
-#     start_date=pendulum.datetime(year=2026, month=6, day=18, tz="Australia/Melbourne")
-# )
+@dag(
+    dag_id="orchestrate",
+    schedule="0 11 * * *",
+    catchup=False,
+    start_date=pendulum.datetime(year=2026, month=6, day=18, tz="Australia/Melbourne")
+)
 
 def orchestrate():
 
     @task
-    def ingest_cdc():
+    def ingest_bronze():
         ws = WorkspaceClient(
             host=os.getenv("DATABRICKS_HOST"),
             token=os.getenv("DATABRICKS_TOKEN")
@@ -83,20 +83,15 @@ def orchestrate():
         bash_command='dbt run --select gold'  
     )
 
-    gold_dimensions = BashOperator(
-        task_id='gold_dimensions',
+    snapshots = BashOperator(
+        task_id='snapshots',
         cwd='/opt/airflow/walmart_proj',
         bash_command='dbt snapshot'  
     )
      
-    gold_facts = BashOperator(
-        task_id='gold_facts',
-        cwd='/opt/airflow/walmart_proj',
-        bash_command='dbt run --select gold/fact'  
-    )
 
-    ingest_cdc() >> clean_target() >> source_freshness() >> silver_technical \
+    ingest_bronze() >> clean_target() >> source_freshness() >> silver_technical \
         >> silver_technical_tests >> silver_business >> silver_business_tests \
-        >> gold >> gold_dimensions >> gold_facts
+        >> gold >> snapshots
 
 orchestrate_dag = orchestrate()
