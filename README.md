@@ -321,43 +321,46 @@ The `orchestrate` DAG chains the whole flow into one observable pipeline:
 
 ```
 ingest_bronze
-  → clean_target
-  → source_freshness
   → silver_technical
   → silver_technical_tests
   → silver_business
   → silver_business_tests
   → gold
+  → gold_tests
   → snapshots
 ```
 
 | Task                       | What it does                                                                                                                        |
 | -------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
-| `ingest_bronze` | Python `@task`: triggers the `walmart ingest` Databricks Job via `WorkspaceClient.jobs.run_now()`, polls `get_run()` every 5s, raises on non-`SUCCESS`. The job runs a **file-level** Auto Loader stream, not row-level CDC — see [Bronze Ingestion](#bronze-ingestion-auto-loader-file-level-incremental). |
-| `clean_target`             | `@task.bash`: clears `target/` and `logs/` so stale compiled artifacts don't leak.                                                  |
-| `source_freshness`         | `dbt source freshness` — fail fast if Bronze is stale.                                                                              |
-| `silver_technical(_tests)` | `dbt run` + `dbt test` on `silver_t`.                                                                                               |
-| `silver_business(_tests)`  | `dbt run` + `dbt test` on `silver_b` (OBT).                                                                                         |
+| `ingest_bronze`            | Python `@task`: triggers the `walmart ingest` Databricks Job via `WorkspaceClient.jobs.run_now()`, polls `get_run()` every 5s, raises on non-`SUCCESS`. The job runs a **file-level** Auto Loader stream, not row-level CDC — see [Bronze Ingestion](#bronze-ingestion-auto-loader-file-level-incremental). |
+| `silver_technical`         | `dbt run --select silver_t` — builds the six cleaned per-table models.                                                              |
+| `silver_technical_tests`   | `dbt test --select silver_t` — 25 generic tests on `silver_t`.                                                                       |
+| `silver_business`          | `dbt run --select silver_b` — builds the One Big Table (OBT).                                                                        |
+| `silver_business_tests`    | `dbt test --select silver_b` — the singular `test_obt` on the OBT.                                                                   |
 | `gold`                     | `dbt run --select gold` — builds all four dimensions and both fact tables (`fact_orders`, `fact_order_items`).                     |
+| `gold_tests`               | `dbt test --select gold` — 22 generic tests on the Gold layer.                                                                      |
 | `snapshots`                | `dbt snapshot` — SCD2 history for the four dimensions.                                                                              |
 
-Tasks are chained with `>>` so a failure upstream (e.g. `source_freshness` or a
-Silver test) **blocks everything downstream** — Gold is never built on stale or
-broken Silver data.
-
+Tasks are chained with `>>` so a failure upstream (e.g. a Silver test or the
+Gold tests) **blocks everything downstream** — Gold is never built on stale or
+broken Silver data, and `snapshots` is never taken on a broken Gold layer.
 
 <details>
 <summary><b>Why the Databricks SDK instead of <code>DatabricksRunNowOperator</code>?</b></summary>
 
-Both call the same Databricks Jobs API:
+Both call the same Databricks Jobs API. The SDK route was chosen for explicit
+control over the polling loop and failure semantics:
 
 ```python
-# Option A — SDK (used here): explicit polling loop
 from databricks.sdk import WorkspaceClient
 from databricks.sdk.service.jobs import RunLifeCycleState, RunResultState
 
-ws = WorkspaceClient(host=DATABRICKS_HOST, token=DATABRICKS_TOKEN)
-run = ws.jobs.run_now(job_id=JOB_ID)
+ws = WorkspaceClient(
+    host=os.getenv("DATABRICKS_HOST"),
+    token=os.getenv("DATABRICKS_TOKEN"),
+)
+job_id = int(os.getenv("DATABRICKS_JOB_ID"))
+run = ws.jobs.run_now(job_id=job_id)
 while True:
     state = ws.jobs.get_run(run.run_id).state
     if state.life_cycle_state in {
@@ -371,19 +374,6 @@ while True:
     time.sleep(5)
 ```
 
-```python
-# Option B — Airflow provider operator (not used): less code, less control
-from airflow.providers.databricks.operators.databricks import DatabricksRunNowOperator
-
-DatabricksRunNowOperator(
-    task_id="trigger_ingest_walmart_job",
-    databricks_conn_id="databricks_default",
-    job_id=JOB_ID,
-)
-```
-
-The SDK route was chosen for explicit control over the polling loop and failure
-semantics. The operator route is simpler when you just want "trigger and wait."
 Credentials are read from `DATABRICKS_HOST` / `DATABRICKS_TOKEN` env vars — never
 hardcoded.
 
