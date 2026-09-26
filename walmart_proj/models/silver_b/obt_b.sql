@@ -49,18 +49,6 @@ select
     p.is_active as product_is_active,
     p.processed_at as product_processed_at,
 
-    -- Employees
-    e.employee_id,
-    e.first_name as employee_first_name,
-    e.last_name as employee_last_name,
-    e.email as employee_email,
-    e.job_title,
-    e.salary,
-    e.created_timestamp as employee_created_timestamp,
-    e.updated_timestamp as employee_updated_timestamp,
-    e.is_active as employee_is_active,
-    e.processed_at as employee_processed_at,
-
     -- Stores
     s.store_name,
     s.city as store_city,
@@ -75,5 +63,4 @@ from {{ ref('orders_t') }} o
 left join {{ ref('customers_t') }} c on o.customer_id = c.customer_id
 left join {{ ref('order_items_t') }} oi on o.order_id = oi.order_id
 left join {{ ref('products_t') }} p on oi.product_id = p.product_id
-left join {{ ref('employees_t') }} e on o.store_id = e.store_id
 left join {{ ref('stores_t') }} s on o.store_id = s.store_id
