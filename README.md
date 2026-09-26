@@ -69,6 +69,23 @@ flowchart TD
    [SCD1 Gold vs. SCD2 Snapshots](#scd1-gold-vs-scd2-snapshots-why-both) for why
    both exist side by side.
 
+### Access Model
+
+Schemas are split so that access can be granted independently:
+
+| Schema | Consumers | Contents |
+|---|---|---|
+| `walmart.gold` | DA / DS | Facts + SCD1 dimensions — "current state" |
+| `walmart.snapshots` | DA / DS (advanced) | SCD2 snapshots — historical versions |
+| `walmart.silver_t` / `silver_b` | Internal only | Intermediate layers |
+| `walmart.bronze` | Internal only | Raw landing |
+
+Keeping `snapshots` separate from `gold` allows two levels of access:
+consumers who only need "what's current" can be granted `gold` alone;
+consumers who need point-in-time history are granted both.
+The tutorial's design puts both SCD1 and SCD2 in `gold`, which cannot
+express this distinction.
+
 ---
 
 ## Project Structure
