@@ -69,7 +69,7 @@ flowchart TD
    [SCD1 Gold vs. SCD2 Snapshots](#scd1-gold-vs-scd2-snapshots-why-both) for why
    both exist side by side.
 
-### Access Model
+## Access Model
 
 Schemas are split so that access can be granted independently:
 
