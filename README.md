@@ -862,6 +862,20 @@ Run all tests:
 dbt test
 ```
 
+### Self-check notebook
+
+A [`verification.ipynb`](./verification.ipynb) is committed to the repo. It
+contains one cell per layer — Bronze, Silver, Gold, Snapshots — printing row
+counts, plus the checks behind the two findings in
+[Design Decisions](#design-decisions):
+
+- the 9 customers in `customers_t` that never appear in `obt_b` (customers
+  with zero orders), and
+- the `fact_orders` grain check (total rows == distinct `order_id`).
+
+Useful as a one-stop "is everything still correct?" after a fresh DAG run
+or a `--full-refresh`.
+
 ---
 
 ## Notes & Deviations from the Reference Tutorial
