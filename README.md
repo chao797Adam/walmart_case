@@ -157,7 +157,7 @@ walmart_proj:
 ```bash
 cd airflow
 docker compose up -d
-# Airflow UI: http://localhost:8080  (airflow / airflow)
+# Airflow UI: http://localhost:18080  (airflow / airflow)
 ```
 
 Trigger the DAG `orchestrate` from the UI, or via CLI:
