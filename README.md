@@ -161,7 +161,6 @@ dbt run  --select silver_b
 dbt test --select silver_b
 dbt run  --select gold
 dbt snapshot
-dbt run  --select gold/fact
 ```
 
 ---
