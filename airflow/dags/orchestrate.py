@@ -8,10 +8,10 @@ from databricks.sdk.service.jobs import RunLifeCycleState, RunResultState
 from dotenv import load_dotenv
 load_dotenv()
 
-# schedule: 0 11 * * * every day at 11:00 AM
+# schedule: 0 11 * * * every day at 11:00 AM, stopped
 @dag(
     dag_id="orchestrate",
-    schedule="0 11 * * *",
+    schedule=None,
     catchup=False,
     start_date=pendulum.datetime(year=2026, month=6, day=18, tz="Australia/Melbourne")
 )
@@ -26,7 +26,8 @@ def orchestrate():
         )
 
         
-        job_trigger = ws.jobs.run_now(job_id=950017999885243)
+        job_id = int(os.getenv("DATABRICKS_JOB_ID"))
+        job_trigger = ws.jobs.run_now(job_id=job_id)
         print(f"✅ Job triggered! Run ID: {job_trigger.run_id}")
 
         while True:
@@ -43,16 +44,8 @@ def orchestrate():
             
             time.sleep(5)
         
-        return "CDC data ingested"
-
-    @task.bash
-    def clean_target():
-        return "rm -rf /opt/airflow/walmart_proj/target && rm -rf /opt/airflow/walmart_proj/logs"
-
-    @task.bash
-    def source_freshness():
-        return "cd /opt/airflow/walmart_proj && dbt source freshness"
-    
+        return "Bronze ingestion completed"
+  
     silver_technical = BashOperator(
         task_id='silver_technical',  
         cwd='/opt/airflow/walmart_proj',  
@@ -90,7 +83,7 @@ def orchestrate():
     )
      
 
-    ingest_bronze() >> clean_target() >> source_freshness() >> silver_technical \
+    ingest_bronze() >> silver_technical \
         >> silver_technical_tests >> silver_business >> silver_business_tests \
         >> gold >> snapshots
 
