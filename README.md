@@ -455,10 +455,17 @@ which fans out each order row by the number of employees at that store. Since
 there is no business relationship between a single order and "every employee
 at the store it was placed at", this fan-out adds no information — only rows.
 
-At this dataset's scale the effect is material: an OBT built on
-orders × order_items × employees can easily be **5× larger** than the same
-OBT without the `employees` join, with no analytical benefit. The join is
-therefore removed, and the OBT is built from five `silver_t` tables:
+At this dataset's scale the effect is material. The measured row counts:
+
+| Version | Row count |
+|---|---|
+| `orders_t` | 10,000 |
+| 6-table OBT (tutorial, with `employees`) | **300,513** |
+| 5-table OBT (this project) | ~30,000 |
+
+A ~10× inflation in storage and scan cost, entirely from a join that carries
+no order-level meaning. The join is therefore removed, and the OBT is built
+from five `silver_t` tables:
 
 ```
 orders_t  (center)
