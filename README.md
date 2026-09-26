@@ -630,6 +630,23 @@ provided as **`fact_orders.sql`** — built **directly from `orders_t`** (not
 from the OBT), with `unique_key='order_id'` and `qualify row_number() = 1`
 for deduplication. See [Flow summary](#flow-summary) §5.
 
+#### Why there is no `dim_orders_snapshot`
+
+The tutorial pairs `eph_orders` with a `dim_orders_snapshot` (SCD Type 2).
+This project does not include one, for two independent reasons:
+
+1. **Structurally**, it would inherit the same fan-out problem: since
+   `eph_orders` is not truly order-grain, its `DISTINCT` leaves multiple
+   rows per `order_id`, and a snapshot built on top of it would record
+   spurious "changes" every time the OBT is rebuilt.
+2. **Conceptually**, an order is an **event**, not an **entity**. SCD2 is
+   the right tool for tracking a mutable entity over time — a customer's
+   address, a product's price, an employee's role. An order happens once;
+   its attributes are fixed at creation. The only mutable field
+   (`order_status`) is better modeled as an event log than as an SCD2
+   version chain. This is why the four `dim_*_snapshot` tables cover
+   customers, products, stores, and employees — but not orders.
+
 ---
 
 ## Data Quality
