@@ -727,7 +727,7 @@ Tests are split across two layers plus singular tests:
 
 - **Silver (`silver_t`)** — 25 generic tests declared in `properties.yml`, all passing.
 - **Gold (`dim_*`, `fact_*`)** — 22 generic tests declared in the Gold `properties.yml`, plus 2 singular tests (`assert_*`). Total 24 tests selected by `dbt test --select gold`.
-- **Singular tests** — 3 custom SQL tests in `tests/` — one on `obt_b` (structural) and two on the Gold layer (cross-table row counts, amount consistency).
+- **Singular tests** — 4 custom SQL tests in `tests/`: one structural (`obt_b`), two on the Gold layer (cross-table row counts, amount consistency), and one on the Bronze layer (`_rescued_data` populated by schema evolution).
 
 ### Silver layer tests — 25 tests
 
@@ -823,15 +823,28 @@ exactly — expected, since the OBT's only remaining fan-out source is
 | `test_obt.sql` | `obt_b` | `order_id`, `product_id`, `store_id`, `order_item_id`, `customer_id` are all non-null in the OBT | `warn` |
 | `assert_fact_orders_matches_orders_t.sql` | `fact_orders` vs `orders_t` | Row counts match — same grain (order), same number of rows | `error` |
 | `assert_fact_orders_matches_order_items.sql` | `fact_orders` vs `fact_order_items` | `SUM(total_amount)` ≈ `SUM(line_amount)` per order, tolerance 0.01 | `error` |
+| `assert_bronze_no_rescued_data.sql` | `walmart.bronze.*` | No Bronze table has `_rescued_data` populated — i.e. the source CSV schema exactly matches the Bronze schema | `error` |
 
 `test_obt.sql` is set to `warn` rather than `error` on purpose — `obt_b` is
 built with `LEFT JOIN`s, so a NULL foreign key is a *legitimate* state (e.g.
 an order with no matching product), but the test still surfaces it so
 unexpected NULL rates don't go unnoticed.
 
-The two `assert_*` tests are **`error`** severity: a mismatch here means the
-Gold layer has dropped or duplicated rows relative to Silver, which should
-never happen silently.
+The `assert_*` tests are **`error`** severity.
+
+- `assert_fact_orders_matches_orders_t` and
+  `assert_fact_orders_matches_order_items` guard the Gold layer: a mismatch
+  means it has dropped or duplicated rows relative to Silver, or the
+  `total_amount` / `line_amount` business rule has broken.
+- `assert_bronze_no_rescued_data` guards the Bronze layer. The Bronze stream
+  uses `cloudFiles.schemaEvolutionMode = "rescue"`, so any source column not
+  present in the Bronze schema — or any value that fails to cast — lands in
+  the `_rescued_data` JSON column instead of crashing the stream. Silver
+  models `select` a fixed column list and never read `_rescued_data`, so a
+  source-side schema change would otherwise be silently dropped. This test
+  asserts `_rescued_data` is `NULL` across all six Bronze tables; if it ever
+  isn't, `dbt test` fails and the schema change is surfaced instead of going
+  unnoticed.
 
 ### Cast validation before Silver
 
