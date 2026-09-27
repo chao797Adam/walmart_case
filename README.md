@@ -471,6 +471,47 @@ qualify
 partitioned by that table's own key (`order_id` for `orders_t`, `product_id`
 for `products_t`, and so on) — not copy-pasted from another table's key.
 
+### `>=` on the incremental cursor, and when it would stop being enough
+
+`silver_t` models filter the incremental batch with `>=` on the cursor, then
+dedupe with `qualify`:
+
+```sql
+where cast(updated_timestamp as timestamp) >= (
+    select coalesce(max(updated_timestamp), timestamp '1900-01-01 00:00:00')
+    from {{ this }}
+)
+qualify row_number() over (
+    partition by <pk>
+    order by cast(updated_timestamp as timestamp) desc
+) = 1
+```
+
+`>=` is the pattern dbt's own docs recommend, and it is sufficient **for this
+source** — but the reason is worth being explicit about.
+
+**The `=` in `>=` is only useful when a new row can share the boundary
+timestamp** — i.e. a source that can write a row whose `updated_timestamp`
+exactly equals the last run's max. This project's source is a static CSV
+snapshot whose `updated_timestamp` increases monotonically across files: a
+newly-arrived row always has a timestamp strictly greater than the current
+max. So the `=` never pulls in a new row — it only re-selects the
+already-processed boundary rows, which are identical to what is already in the
+target. The `qualify` therefore has nothing new to resolve, and picking any
+of those duplicate boundary rows produces the same result.
+
+This is not a universal recipe. It holds because the source has two
+properties: **(1) timestamps only move forward**, and **(2) a row is never
+rewritten without its `updated_timestamp` being refreshed.** Against a live,
+mutable database where either property fails, the same `>=` would not be
+enough — a row updated twice within the same timestamp could be deduped to
+the wrong version, and a row rewritten without a timestamp bump would be
+missed entirely. The correct fix there is not to patch `qualify` with a
+tie-breaker, but to switch to a real change-data-capture mechanism (e.g.
+Databricks Lakeflow Connect) that reads the change log instead of scanning a
+timestamp column. The right approach depends on the source, not on the SQL
+pattern.
+
 ### Dimensions are built from `silver_t`, not from the OBT
 
 The course builds dimensions like `dim_customers` by `SELECT DISTINCT` from the
@@ -987,4 +1028,4 @@ silently produce wrong results.
 ## Reference
 
 - Course / inspiration: [Walmart End-to-End Data Pipeline (YouTube)](https://www.youtube.com/watch?v=ZEE-jNAthB0&t=27s)
-
+- dbt / Configure incremental models (https://docs.getdbt.com/docs/build/incremental-models?version=2)
