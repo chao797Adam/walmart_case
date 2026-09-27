@@ -28,7 +28,7 @@ from {{ source('walmart_databricks', 'customers') }}
 
 {% if is_incremental() %}
     where
-        cast(updated_timestamp as timestamp) > (
+        cast(updated_timestamp as timestamp) >= (
             select coalesce(max(updated_timestamp), timestamp '1900-01-01 00:00:00')
             from {{ this }}
         )
