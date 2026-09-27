@@ -786,6 +786,11 @@ Generic tests for the four dimensions and both facts
   and `fact_orders.store_id → dim_stores.store_id`, plus
   `accepted_range(min_value: 0)` on `fact_orders.total_amount`.
 
+In addition to these generic tests, the Gold layer is covered by two
+singular tests (`assert_fact_orders_matches_orders_t`,
+`assert_fact_orders_matches_order_items`) — see
+[Singular tests](#singular-tests-tests).
+
 Run:
 
 ```bash
