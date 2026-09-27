@@ -1028,4 +1028,4 @@ silently produce wrong results.
 ## Reference
 
 - Course / inspiration: [Walmart End-to-End Data Pipeline (YouTube)](https://www.youtube.com/watch?v=ZEE-jNAthB0&t=27s)
-- dbt / Configure incremental models (https://docs.getdbt.com/docs/build/incremental-models?version=2)
+- dbt / Configure incremental models: [Incremental models](https://docs.getdbt.com/docs/build/incremental-models?version=2)
