@@ -334,7 +334,7 @@ ingest_bronze
 | -------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
 | `ingest_bronze`            | Python `@task`: triggers the `walmart ingest` Databricks Job via `WorkspaceClient.jobs.run_now()`, polls `get_run()` every 5s, raises on non-`SUCCESS`. The job runs a **file-level** Auto Loader stream, not row-level CDC — see [Bronze Ingestion](#bronze-ingestion-auto-loader-file-level-incremental). |
 | `silver_technical`         | `dbt run --select silver_t` — builds the six cleaned per-table models.                                                              |
-| `silver_technical_tests`   | `dbt test --select silver_t` — 25 tests on `silver_t` (dbt reports `26`, because the selector also pulls in `assert_fact_orders_matches_orders_t`. |
+| `silver_technical_tests`   | `dbt test --select silver_t` — 25 tests on `silver_t` (dbt reports `26`, because the selector also pulls in `assert_fact_orders_matches_orders_t`). |
 | `silver_business`          | `dbt run --select silver_b` — builds the One Big Table (OBT).                                                                        |
 | `silver_business_tests`    | `dbt test --select silver_b` — the singular `test_obt` on the OBT.                                                                   |
 | `gold`                     | `dbt run --select gold` — builds all four dimensions and both fact tables (`fact_orders`, `fact_order_items`).                       |
@@ -758,8 +758,8 @@ non-negativity checks on numeric columns.
 | 19 | `employees_t` | `salary` | `dbt_utils.expression_is_true(>= 0)` |
 
 Rows with more than one test (e.g. `unique` + `not_null` on the same column)
-collapse into a single row above; the "25 tests" count is dbt's own
-`TOTAL=` from the last `dbt test --select silver_t` run.
+collapse into a single row above; the "25 tests" count refers to the generic
+tests declared for `silver_t`, not dbt's `TOTAL=`. from the last `dbt test --select silver_t` run.
 
 **Conventions applied at the Silver layer:**
 
