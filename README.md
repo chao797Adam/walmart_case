@@ -334,7 +334,7 @@ ingest_bronze
 | -------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
 | `ingest_bronze`            | Python `@task`: triggers the `walmart ingest` Databricks Job via `WorkspaceClient.jobs.run_now()`, polls `get_run()` every 5s, raises on non-`SUCCESS`. The job runs a **file-level** Auto Loader stream, not row-level CDC — see [Bronze Ingestion](#bronze-ingestion-auto-loader-file-level-incremental). |
 | `silver_technical`         | `dbt run --select silver_t` — builds the six cleaned per-table models.                                                              |
-| `silver_technical_tests`   | `dbt test --select silver_t` — 25 tests on `silver_t` (dbt reports `26`, because the selector also pulls in `assert_fact_orders_matches_orders_t`; see [note](#why-silver_t-reports-26-not-25)). |
+| `silver_technical_tests`   | `dbt test --select silver_t` — 25 tests on `silver_t` (dbt reports `26`, because the selector also pulls in `assert_fact_orders_matches_orders_t`. |
 | `silver_business`          | `dbt run --select silver_b` — builds the One Big Table (OBT).                                                                        |
 | `silver_business_tests`    | `dbt test --select silver_b` — the singular `test_obt` on the OBT.                                                                   |
 | `gold`                     | `dbt run --select gold` — builds all four dimensions and both fact tables (`fact_orders`, `fact_order_items`).                       |
