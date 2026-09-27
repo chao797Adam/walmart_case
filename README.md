@@ -26,7 +26,7 @@ flowchart TD
     A["Raw CSV files in a Databricks Volume"] -->|"Auto Loader (cloudFiles), file-level, per-table"| B["Bronze - raw tables in Databricks"]
     B -->|"dbt incremental"| C["Silver_t - cleaned per-table models"]
     C -->|"dbt table model - LEFT JOIN x5"| D["Silver_b - One Big Table"]
-    C -->|"dbt table models"| E["Gold - facts + dimensions"]
+    C -->|"dbt incremental"| E["Gold - facts + dimensions"]
     C -->|"dbt snapshot - timestamp strategy"| F["Snapshots - SCD Type 2 dimensions"]
 ```
 
