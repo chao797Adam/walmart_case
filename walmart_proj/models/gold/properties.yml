@@ -8,6 +8,7 @@ models:
         data_tests:
           - unique
           - not_null
+          
 
   - name: dim_employees
     columns:
@@ -25,14 +26,14 @@ models:
         data_tests:
           - unique
           - not_null
-
+          
   - name: dim_products
     columns:
       - name: product_id
         data_tests:
           - unique
           - not_null
-
+          
   # (Facts)
   - name: fact_order_items
     columns:
