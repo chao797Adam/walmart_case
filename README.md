@@ -770,7 +770,7 @@ non-negativity checks on numeric columns.
 
 Rows with more than one test (e.g. `unique` + `not_null` on the same column)
 collapse into a single row above; the "25 tests" count refers to the generic
-tests declared for `silver_t`, not dbt's `TOTAL=`. from the last `dbt test --select silver_t` run.
+tests declared for `silver_t`, not dbt's `TOTAL=`.
 
 **Conventions applied at the Silver layer:**
 
