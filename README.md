@@ -27,9 +27,20 @@ flowchart TD
     B -->|"dbt incremental"| C["Silver_t - cleaned per-table models"]
     C -->|"dbt table model - LEFT JOIN x5"| D["Silver_b - One Big Table"]
     C -->|"dbt table models"| E["Gold - facts + dimensions"]
-    E -->|"dbt snapshot - timestamp strategy"| F["Snapshots - SCD Type 2 dimensions"]
-    D -.->|"Airflow: dbt run"| E
+    C -->|"dbt snapshot - timestamp strategy"| F["Snapshots - SCD Type 2 dimensions"]
 ```
+
+> **Diagram vs. DAG.** The diagram above shows **data lineage** — which layer
+> reads from which. The Airflow DAG executes these steps **linearly**:
+> `ingest_bronze → silver_technical → silver_technical_tests → silver_business →
+> silver_business_tests → gold → gold_tests → snapshots`. The two are not the
+> same thing. Execution order is a scheduling choice (run one step after
+> another so a failure blocks everything downstream); data lineage is a fact
+> about where each model reads from. For example, `snapshots` runs *after*
+> `gold` in the DAG, but it reads from `silver_t`, not from `gold` — which is
+> why the diagram routes `silver_t → snapshots` directly, in parallel with
+> the `gold` branch. Similarly, `gold` is scheduled after `silver_business`
+> but does not depend on the OBT.
 
 **Flow summary**
 
