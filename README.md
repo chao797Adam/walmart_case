@@ -512,6 +512,12 @@ Databricks Lakeflow Connect) that reads the change log instead of scanning a
 timestamp column. The right approach depends on the source, not on the SQL
 pattern.
 
+Note that `qualify row_number() = 1` guarantees one row per key regardless of
+whether a tie-breaker is present — `row_number()` never produces ties. What a
+missing tie-breaker affects is *which* row is kept when timestamps collide,
+not *how many*. In this project the colliding rows are identical versions, so
+the choice does not matter; against a live source it would.
+
 ### Dimensions are built from `silver_t`, not from the OBT
 
 The course builds dimensions like `dim_customers` by `SELECT DISTINCT` from the
