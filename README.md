@@ -726,8 +726,8 @@ This project does not include one, for two independent reasons:
 Tests are split across two layers plus singular tests:
 
 - **Silver (`silver_t`)** — 25 generic tests declared in `properties.yml`, all passing.
-- **Gold (`dim_*`, `fact_*`)** — 22 generic tests declared in the Gold `properties.yml`, all passing.
-- **Singular tests** — 1 custom SQL test in `tests/`, targeting `obt_b`.
+- **Gold (`dim_*`, `fact_*`)** — 22 generic tests declared in the Gold `properties.yml`, plus 2 singular tests (`assert_*`). Total 24 tests selected by `dbt test --select gold`.
+- **Singular tests** — 3 custom SQL tests in `tests/` — one on `obt_b` (structural) and two on the Gold layer (cross-table row counts, amount consistency).
 
 ### Silver layer tests — 25 tests
 
@@ -816,11 +816,17 @@ exactly — expected, since the OBT's only remaining fan-out source is
 | File | Target | What it checks | Severity |
 |---|---|---|---|
 | `test_obt.sql` | `obt_b` | `order_id`, `product_id`, `store_id`, `order_item_id`, `customer_id` are all non-null in the OBT | `warn` |
+| `assert_fact_orders_matches_orders_t.sql` | `fact_orders` vs `orders_t` | Row counts match — same grain (order), same number of rows | `error` |
+| `assert_fact_orders_matches_order_items.sql` | `fact_orders` vs `fact_order_items` | `SUM(total_amount)` ≈ `SUM(line_amount)` per order, tolerance 0.01 | `error` |
 
-This test is set to `warn` rather than `error` on purpose — `obt_b` is built
-with `LEFT JOIN`s, so a NULL foreign key is a *legitimate* state (e.g. an
-order with no matching product), but the test still surfaces it so unexpected
-NULL rates don't go unnoticed.
+`test_obt.sql` is set to `warn` rather than `error` on purpose — `obt_b` is
+built with `LEFT JOIN`s, so a NULL foreign key is a *legitimate* state (e.g.
+an order with no matching product), but the test still surfaces it so
+unexpected NULL rates don't go unnoticed.
+
+The two `assert_*` tests are **`error`** severity: a mismatch here means the
+Gold layer has dropped or duplicated rows relative to Silver, which should
+never happen silently.
 
 ### Cast validation before Silver
 
