@@ -215,6 +215,8 @@ The ingestion is orchestrated as a two-stage Databricks Job (`walmart ingest`):
 [ Notebook: bronze_ingest ] (Executed iteratively for each table)
 
 ```
+**Databricks Workflow Interface Preview:**
+![Databricks Workflow Ingestion Pipeline](assets/databricks_workflow.png)
 
 ### 2. Core Engineering Highlights
 
