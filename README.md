@@ -193,11 +193,37 @@ dbt snapshot
 
 ---
 
-## Bronze Ingestion: Auto Loader (file-level incremental)
+## Bronze Ingestion: Dynamic Multi-Table Pipeline via Auto Loader
 
-Each source table is loaded into Bronze by the **same notebook, parameterized**
-by table name via a Databricks widget, rather than six separate hardcoded
-notebooks:
+To adhere to the **DRY (Don't Repeat Yourself)** principle and ensure scalability, this pipeline avoids hardcoding separate notebooks or tasks for each source table. Instead, it utilizes a **dynamic parameterized workflow** combining Databricks Task Values, For-each loops, and Auto Loader.
+
+### 1. Architecture & Execution Flow
+
+The ingestion is orchestrated as a two-stage Databricks Job (`walmart ingest`):
+
+```text
+[ Task 1: ingest_list ] 
+        │ 
+        ├─ Defines table list: ["orders", "customers", "products", "order_items", "stores", "employees"]
+        ├─ Passes data via: dbutils.jobs.taskValues.set(key="table_list", value=table_list)
+        ▼
+[ Task 2: ingest_all_tables_iteration (For-each Task) ]
+        │
+        ├─ Input Source: {{tasks.ingest_list.values.table_list}}
+        ├─ Iteration Variable: {{input}} mapped to widget `table_name`
+        ▼
+[ Notebook: bronze_ingest ] (Executed iteratively for each table)
+
+```
+
+### 2. Core Engineering Highlights
+
+* **Dynamic Orchestration**: The upstream task computes or defines the target list, making it trivial to scale or onboard new tables without modifying downstream notebook logic.
+* **Auto Loader (`cloudFiles`)**: Incrementally and efficiently ingests raw CSV files from cloud storage into Bronze Delta tables without full scans.
+* **Schema Evolution & Resilience**: Configured with `.option("cloudFiles.schemaEvolutionMode", "rescue")` to capture schema drift safely without failing pipeline execution.
+* **Observability & Metrics Tracking**: Beyond standard logging, each run queries Delta's commit history (`DESCRIBE HISTORY`) to programmatically output exact execution metrics (e.g., `batchId`, total row count, and rows written in the current run).
+
+### 3. Notebook Implementation Snippet
 
 ```python
 dbutils.widgets.text("table_name", "", "Table Name")
@@ -219,40 +245,12 @@ query = df.writeStream.format("delta") \
 
 query.awaitTermination()
 
-prog = query.lastProgress
-print(f"✅ batchId      : {prog.get('batchId') if prog else None}")
-
-# Table's total row count after this run
-total = spark.sql(f"SELECT COUNT(*) FROM walmart.bronze.{table_name}").collect()[0][0]
-print(f"✅ Total rows in table : {total}")
-
-# Rows written by this specific run, from Delta's own commit history
+# Operational logging from Delta commit history
 hist = spark.sql(f"DESCRIBE HISTORY walmart.bronze.{table_name} LIMIT 1").collect()[0]
 metrics = hist["operationMetrics"] or {}
 print(f"✅ Rows written this run : {metrics.get('numOutputRows', 'N/A')}")
-print(f"✅ operation            : {hist['operation']}")
-```
-
-The notebook is **invoked by a Databricks Job** (`walmart ingest`) using a
-`for_each` task, which loops the same parameterized notebook over the six
-table names — `orders`, `customers`, `products`, `order_items`, `stores`,
-`employees` — in a single job run:
 
 ```
-Task 1: ingest_list           → sets table_list = ["orders", ..., "employees"]
-                                    via dbutils.jobs.taskValues.set
-    ↓
-Task 2: ingest_all_tables     → For each
-    ├── inputs: {{tasks.ingest_list.values.table_list}}
-    └── inner task: bronze_ingest notebook
-            parameter: table_name = {{input}}
-```
-
-Each iteration invokes the same notebook once, so the notebook that was
-originally run manually six times is now driven by the Job's loop. The
-notebook does not need any modification — it was already parameterized via
-`dbutils.widgets`.
-
 ### Verifying the Job
 
 The Job has been verified two ways:
