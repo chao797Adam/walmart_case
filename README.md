@@ -787,7 +787,7 @@ Tests are split across two layers plus singular tests:
 - **Gold (`dim_*`, `fact_*`)** — 22 generic tests declared in the Gold `properties.yml`, plus 2 singular tests (`assert_*`). Total 24 tests selected by `dbt test --select gold`.
 - **Singular tests** — 4 custom SQL tests in `tests/`: one structural (`obt_b`), two on the Gold layer (cross-table row counts, amount consistency), and one on the Bronze layer (`_rescued_data` populated by schema evolution).
 
-### Silver layer tests — 25 tests
+### Silver layer tests — 26 tests
 
 Every `_t` model carries the same baseline: primary key `unique` + `not_null`,
 foreign keys `not_null`, referential integrity via `relationships`, and
@@ -813,11 +813,10 @@ non-negativity checks on numeric columns.
 | 16 | `stores_t` | `store_id` | `unique`, `not_null` |
 | 17 | `employees_t` | `employee_id` | `unique`, `not_null` |
 | 18 | `employees_t` | `store_id` | `not_null` |
-| 19 | `employees_t` | `salary` | `dbt_utils.expression_is_true(>= 0)` |
+| 19 | `employees_t` | `store_id` | `relationships → stores_t.store_id` |
+| 20 | `employees_t` | `salary` | `dbt_utils.expression_is_true(>= 0)` |
 
-Rows with more than one test (e.g. `unique` + `not_null` on the same column)
-collapse into a single row above; the "25 tests" count refers to the generic
-tests declared for `silver_t`, not dbt's `TOTAL=`.
+26 generic tests are declared for `silver_t`. `dbt build --select silver_t` reports 27 because it also picks up the singular reconciliation test `assert_fact_orders_matches_orders_t`.
 
 **Conventions applied at the Silver layer:**
 
@@ -825,8 +824,9 @@ tests declared for `silver_t`, not dbt's `TOTAL=`.
 - **Foreign keys** (`orders_t.customer_id`, `orders_t.store_id`,
   `order_items_t.order_id`, `order_items_t.product_id`,
   `employees_t.store_id`) → `not_null`.
-- **Referential integrity** for `orders_t.customer_id → customers_t.customer_id`
-  and `orders_t.store_id → stores_t.store_id` → `relationships`.
+- **Referential integrity** for `orders_t.customer_id → customers_t.customer_id`,
+  `orders_t.store_id → stores_t.store_id` and
+  `employees_t.store_id → stores_t.store_id` → `relationships`.
 - **Non-negativity** on amounts (`price`, `total_amount`, `unit_price`,
   `line_amount`, `salary` ≥ 0) and **positivity** on `quantity` (> 0).
 

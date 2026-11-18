@@ -88,6 +88,10 @@ models:
       - name: store_id
         data_tests:
           - not_null
+          - relationships:
+              arguments:
+                to: ref('stores_t')
+                field: store_id
       - name: salary
         data_tests:
           - dbt_utils.expression_is_true:
