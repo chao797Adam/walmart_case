@@ -22,7 +22,7 @@ with
         from {{ ref('stores_t') }}
         {% if is_incremental() %}
             where
-                updated_timestamp > (
+                updated_timestamp >= (
                     select coalesce(max(updated_timestamp), timestamp '1900-01-01')
                     from {{ this }}
                 )

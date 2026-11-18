@@ -1,1 +1,1 @@
-select * from {{ ref('orders_t') }} limit 10
+select * from {{ source('walmart_databricks', 'orders') }} limit 10

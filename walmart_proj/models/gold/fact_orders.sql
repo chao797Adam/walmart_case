@@ -25,7 +25,7 @@ select
 from {{ ref('orders_t') }}
 {% if is_incremental() %}
     where
-        updated_timestamp > (
+        updated_timestamp >= (
             select coalesce(max(updated_timestamp), timestamp '1900-01-01 00:00:00')
             from {{ this }}
         )
