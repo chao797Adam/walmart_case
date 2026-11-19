@@ -799,9 +799,9 @@ The tutorial pairs `eph_orders` with a `dim_orders_snapshot` (SCD Type 2).
 This project does not include one, for two independent reasons:
 
 1. **Structurally**, it would inherit the same fan-out problem: since
-   `eph_orders` is not truly order-grain, its `DISTINCT` leaves multiple
-   rows per `order_id`, and a snapshot built on top of it would record
-   spurious "changes" every time the OBT is rebuilt.
+   `eph_orders` is derived from the fanned-out OBT, it cannot be relied on
+   to have one row per `order_id`, and a snapshot built on top of it could
+   record spurious "changes" every time the OBT is rebuilt.
 2. **Conceptually**, an order is an **event**, not an **entity**. SCD2 is
    the right tool for tracking a mutable entity over time — a customer's
    address, a product's price, an employee's role. An order happens once;
@@ -815,7 +815,7 @@ This project does not include one, for two independent reasons:
 
 In the reference tutorial, `fact_orders` is derived from the OBT. Around the **4h 09m mark** the author runs a check that counts `order_item_id` per `order_id` (`HAVING COUNT(order_item_id) > 1`), and it returns counts such as 50 and 70. So the tutorial's `fact_orders` is not at order grain.
 
-The OBT it comes from joins six tables, including the `employees` fan-out, so it holds about 300,000 rows for 10,000 orders, roughly 30 rows per order on average. `DISTINCT` does not bring that back to one row per order. A dashboard that sums `total_amount` on such a table would overcount revenue by the same duplication factor.
+The model reads straight from the six-table OBT (`from {{ ref('obt_b') }}`) and carries line-item columns (`quantity`, `unit_price`, `line_amount`) plus `employee_id`. That OBT holds about 300,000 rows for 10,000 orders, roughly 30 rows per order on average (line items multiplied by the employees at the store), so the table is not at order grain. A dashboard that sums `total_amount` on it would overcount revenue by the same duplication factor.
 
 **Resolution:** In this project, `fact_orders` is built from `orders_t` and deduplicated with `qualify row_number() = 1`. A singular test (`assert_fact_orders_matches_orders_t`) guarantees that its row count equals `orders_t` (10,000 rows). Line-item detail lives in the separate `fact_order_items` table (30,021 rows).
 
@@ -1073,7 +1073,7 @@ silently produce wrong results.
 
 | # | Deviation | Why |
 |---|---|---|
-| 9 | Dimensions built from `silver_t`, not `SELECT DISTINCT` on the OBT | Three independent reasons: (a) `DISTINCT` can't collapse fan-out; (b) `DISTINCT` only collapses rows identical across every selected column; (c) the OBT is `orders`-centered, so it silently drops entities with no fact rows — 9 of 2,000 customers have zero orders and would be lost |
+| 9 | Dimensions built from `silver_t`, not `SELECT DISTINCT` on the OBT | Three independent reasons: (a) `DISTINCT` is fragile: it only collapses rows identical across every selected column; (b) the OBT inherits the order → order_items row duplication; (c) the OBT is `orders`-centered, so it silently drops entities with no fact rows — 9 of 2,000 customers have zero orders and would be lost |
 | 10 | Dimensions are `incremental`, not `table` | `silver_t` is append-only row versions; a full rebuild re-scans unbounded history |
 | 11 | SCD1 gold dimensions and SCD2 snapshots both exist | "current" vs "historical" are different query patterns |
 
