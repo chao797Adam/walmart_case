@@ -42,7 +42,7 @@ flowchart TD
 > the `gold` branch. Similarly, `gold` is scheduled after `silver_business`
 > but does not depend on the OBT.
 
-**Flow summary**
+### Flow summary
 
 1. **Source** — a static CSV snapshot of the Walmart dataset
    (`orders`, `customers`, `products`, `order_items`, `stores`, `employees`),
@@ -52,7 +52,7 @@ flowchart TD
 2. **Bronze** — A per-table Auto Loader (`cloudFiles`) stream, driven by a
    parameterized notebook (`dbutils.widgets`), ingests new files
    from the raw Volume into `bronze.*`. See
-   [Bronze Ingestion](#bronze-ingestion-auto-loader-file-level-incremental) below —
+   [Bronze Ingestion](#bronze-ingestion-dynamic-multi-table-pipeline-via-auto-loader) below —
    this is **file-level** incrementality, distinct from the row-level CDC that
    happens one layer up, in Silver.
 3. **Silver_t** — One dbt **incremental model per table**, using
@@ -343,7 +343,7 @@ ingest_bronze
 
 | Task                       | What it does                                                                                                                        |
 | -------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
-| `ingest_bronze`            | Python `@task`: triggers the `walmart ingest` Databricks Job via `WorkspaceClient.jobs.run_now()`, polls `get_run()` every 5s, raises on non-`SUCCESS`. The job runs a **file-level** Auto Loader stream, not row-level CDC — see [Bronze Ingestion](#bronze-ingestion-auto-loader-file-level-incremental). |
+| `ingest_bronze`            | Python `@task`: triggers the `walmart ingest` Databricks Job via `WorkspaceClient.jobs.run_now()`, polls `get_run()` every 5s, raises on non-`SUCCESS`. The job runs a **file-level** Auto Loader stream, not row-level CDC — see [Bronze Ingestion](#bronze-ingestion-dynamic-multi-table-pipeline-via-auto-loader). |
 | `silver_technical`         | `dbt run --select silver_t` — builds the six cleaned per-table models.                                                              |
 | `silver_technical_tests`   | `dbt test --select silver_t` — 26 generic tests on `silver_t` (dbt reports `27`, because the selector also pulls in `assert_fact_orders_matches_orders_t`). |
 | `silver_business`          | `dbt run --select silver_b` — builds the One Big Table (OBT).                                                                        |
@@ -427,7 +427,7 @@ static CSV snapshot of the same Walmart dataset was exported once and
 uploaded to a raw Volume
 (`/Volumes/walmart/raw/rawvolume/{table_name}/`), and Bronze ingestion reads
 from there via Auto Loader (see
-[Bronze Ingestion](#bronze-ingestion-auto-loader-file-level-incremental)).
+[Bronze Ingestion](#bronze-ingestion-dynamic-multi-table-pipeline-via-auto-loader)).
 
 This has one consequence worth being explicit about: **the row-level CDC
 cursor (`updated_timestamp`) still works in Silver**, because it's a field
@@ -454,7 +454,7 @@ raises an error (multiple source rows matching the same target row), the
 same failure mode hit earlier in this project's `job_ready_dbt` sibling.
 
 Because Bronze is pure append-only (see
-[Bronze Ingestion](#bronze-ingestion-auto-loader-file-level-incremental)), a
+[Bronze Ingestion](#bronze-ingestion-dynamic-multi-table-pipeline-via-auto-loader)), a
 single incremental window can legitimately contain more than one version of
 the same row — e.g. a customer updated twice in one day, both landing in the
 same batch. Without a dedup step, this isn't just a correctness risk, it's a
