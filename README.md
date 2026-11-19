@@ -194,10 +194,10 @@ dbt test --select silver_b                       # 5 not_null tests (warn)
 dbt run  --select gold                           # 4 dimensions + 2 facts
 dbt test --select gold                           # 22 generic + 2 singular tests
 
-**Note:** The Quickstart command `dbt test --select gold` runs both generic tests and applicable singular tests associated with the Gold models in a single step. In the Airflow DAG, these tests are separated into two tasks: `gold_tests` runs generic tests, while `singular_tests` runs singular tests across the project. This separation provides clearer task-level monitoring and failure tracking.
-
 dbt snapshot                                     # SCD2 history
 ```
+
+**Note:** The Quickstart command `dbt test --select gold` runs both generic tests and applicable singular tests associated with the Gold models in a single step. In the Airflow DAG, these tests are separated into two tasks: `gold_tests` runs generic tests, while `singular_tests` runs singular tests across the project. This separation provides clearer task-level monitoring and failure tracking.
 
 Useful variants:
 
@@ -364,7 +364,7 @@ ingest_bronze
 |---|---|
 | `ingest_bronze` | Python `@task`: triggers the `walmart ingest` Databricks Job via `WorkspaceClient.jobs.run_now()`, polls `get_run()` every 5 seconds, and raises an exception if the run does not succeed. The job runs a **file-level** Auto Loader stream, not row-level CDC — see [Bronze Ingestion](#bronze-ingestion-dynamic-multi-table-pipeline-via-auto-loader). |
 | `silver_technical` | `dbt run --select silver_t` — builds the six cleaned per-table models. |
-| `silver_technical_tests` | `dbt test --select silver_t,test_type:generic` — executes generic tests on `silver_t`. Executes generic tests selected for the silver_t layer. |
+| `silver_technical_tests` | `dbt test --select silver_t,test_type:generic` — executes generic tests on `silver_t`. |
 | `silver_business` | `dbt run --select silver_b` — builds the One Big Table (OBT). |
 | `silver_business_tests` | `dbt test --select silver_b,test_type:generic` — executes generic tests on the business-level Silver layer, including the 5 `not_null` tests (severity `warn`) on key columns of `obt_b`. |
 | `gold` | `dbt run --select gold` — builds all four dimensions and both fact tables (`fact_orders`, `fact_order_items`). |
@@ -477,7 +477,7 @@ baked into the CSV data itself, not something derived from a live database
 connection — `silver_t` models can still filter
 `where updated_timestamp > max(updated_timestamp)` correctly. What's
 different is only *how new data arrives at Bronze* (Auto Loader watching a
-Volume for new/changed files, file-level) versus what the original design
+Volume for new files, file-level) versus what the original design
 assumed (a live database pulling rows directly, row-level). If this pipeline
 needed to run against a genuinely live, continuously-updating source again,
 the ingestion layer would need to be re-established — either via a hosted
