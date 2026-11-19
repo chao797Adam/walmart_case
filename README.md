@@ -632,23 +632,18 @@ This keeps **facts, dimensions, and the OBT as independent, parallel outputs
 of the Silver layer** — no Gold model depends on another Gold/Silver-wide
 output.
 
-#### The OBT silently drops entities with no fact rows
+### The OBT silently drops entities with no fact rows (and why the tutorial's `eph_customers` is flawed)
 
-The two reasons above are about **row inflation** — the OBT has too *many*
-rows per entity. There is a symmetric problem in the other direction: the
-OBT has too *few* entities.
+The two reasons above are about **row inflation** — the OBT has too *many* rows per entity. There is a symmetric problem in the other direction: the OBT has too *few* entities.
 
-Because `obt_b` is `orders`-centered, a customer who has never placed an
-order appears in `customers_t` but **not** in the OBT. Building
-`dim_customers` or `dim_customers_snapshot` from the OBT would silently
-drop those customers.
+The original tutorial builds `dim_customers` by extracting from the OBT via an `ephemeral` model (`eph_customers.sql`) using `SELECT DISTINCT`. **This is a critical anti-pattern.** Because `obt_b` is `orders`-centered, a customer who has never placed an order appears in `customers_t` but **not** in the OBT. Building dimensions from the OBT silently drops these customers.
 
-This is measurable on the current dataset:
+This isn't just theoretical — it's directly measurable in the tutorial's own output. *(Reference: The tutorial video around the **3h 58m mark** shows the `eph_customers` query returning exactly 1,991 rows, whereas the source `customers_t` has 2,000).*
 
 | Source | Distinct `customer_id` |
 |---|---|
 | `customers_t` | **2,000** |
-| `obt_b` | **1,991** |
+| Tutorial's `eph_customers` (from OBT) | **1,991** |
 | **Missing** | **9** |
 
 The 9 missing customers are exactly those with zero orders. Verified with:
@@ -662,13 +657,9 @@ where o.customer_id is null
 order by c.customer_id;
 ```
 
-The query returns exactly 9 rows — Keith Jenkins, Joshua Le, Karen Robinson,
-and 6 others who have registered but never placed an order. They are real
-customers. Any dimension built from the OBT would lose them.
+The query returns exactly 9 rows — Keith Jenkins, Joshua Le, Karen Robinson, and 6 others who have registered but never placed an order. They are real customers. **Any dimension built from the OBT loses them.**
 
-Building dimensions from their own `silver_t` table (as this project does)
-avoids this entirely — a customer with no orders is still a customer, and
-the dimension should still track them.
+**Resolution:** This project removes all `gold/ephemeral/` models. Dimensions are built directly from their own `silver_t` tables. A customer with no orders is still a customer, and the dimension tracks them. This also avoids the `DISTINCT` + `CURRENT_TIMESTAMP()` issue that breaks deduplication entirely.
 
 ### Gold Dimensions: SCD1, Incrementally
 
