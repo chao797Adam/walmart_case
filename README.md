@@ -588,10 +588,13 @@ OBT. This project deliberately does not, for two reasons:
   one-to-many, every dimension column pulled from the OBT is repeated once per
   order line. `DISTINCT` treats a symptom, not the cause.
 
-The same risk carries over to snapshots: if snapshots were built on OBT-derived
-dimensions, duplicated rows that differ in any column could be recorded as
-spurious SCD2 versions. Building each snapshot from its own `silver_t` table
-avoids this.
+The tutorial also builds its snapshots on these OBT-derived models, so the
+duplicated rows flow into the snapshots as well. The grain check in
+[Fixing the grain violation in the tutorial's `fact_orders`](#fixing-the-grain-violation-in-the-tutorials-fact_orders)
+describes the effect as shown in the tutorial video: its own check returns 50
+and 70 rows for some orders. I did not rebuild the tutorial's version; this
+project is designed to avoid that pattern. This project snapshots each `silver_t` table directly, where
+`qualify row_number() = 1` guarantees one row per key.
 
 #### The OBT itself joins 5 tables, not 6
 
