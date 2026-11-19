@@ -12,6 +12,7 @@ connection
 .env
 .python-version
 profiles.yml
+walmart_proj/profiles.yml
 main.py
 dbt.log
 logs/
