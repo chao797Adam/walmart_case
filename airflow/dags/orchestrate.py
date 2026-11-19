@@ -55,7 +55,7 @@ def orchestrate():
     silver_technical_tests = BashOperator(
         task_id='silver_technical_tests',  
         cwd='/opt/airflow/walmart_proj',  
-        bash_command='dbt test --select silver_t'  
+        bash_command='dbt test --select silver_t,test_type:generic'  
     )
 
     silver_business = BashOperator(
@@ -67,7 +67,7 @@ def orchestrate():
     silver_business_tests = BashOperator(
         task_id='silver_business_tests',  
         cwd='/opt/airflow/walmart_proj',  
-        bash_command='dbt test --select silver_b'  
+        bash_command='dbt test --select silver_b,test_type:generic'  
     )
     
     gold = BashOperator(
@@ -79,9 +79,15 @@ def orchestrate():
     gold_tests = BashOperator(
             task_id='gold_tests',
             cwd='/opt/airflow/walmart_proj',
-            bash_command='dbt test --select gold'
+            bash_command='dbt test --select gold,test_type:generic'
         )
-    
+
+    singular_tests = BashOperator(
+        task_id='singular_tests',
+        cwd='/opt/airflow/walmart_proj',
+        bash_command='dbt test --select singular,test_type:generic'
+    )
+
     snapshots = BashOperator(
         task_id='snapshots',
         cwd='/opt/airflow/walmart_proj',
