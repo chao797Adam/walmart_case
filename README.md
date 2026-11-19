@@ -462,7 +462,7 @@ tool followed.
 ### Source: CSV in Volume
 
 The course this project follows connects directly to a live database and
-pulls rows with `updated_timestamp > last_checkpoint` as a true row-level
+pulls rows with `updated_timestamp > last_checkpoint` as a row-level
 CDC read. **That live source is not used in this project.** Instead, a
 static CSV snapshot of the same Walmart dataset was exported once and
 uploaded to a raw Volume
