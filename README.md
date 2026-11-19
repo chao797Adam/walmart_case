@@ -101,23 +101,29 @@ express this distinction.
 ## Project Structure
 
 ```
-walmart_proj/
-├── models/
-│   ├── source/          # source table definitions
-│   ├── silver_t/        # per-table incremental models
-│   ├── silver_b/        # OBT (one big table), joined from silver_t
-│   └── gold/            # fact + dimension tables
-├── snapshots/           # SCD2 snapshots for the 4 dimension tables
-├── tests/               # singular / custom data quality tests
-├── macros/
+walmart_dbt_case/
+├── airflow/                    # orchestration
+│   ├── dags/
+│   │   └── orchestrate.py
+│   ├── docker-compose.yaml
+│   ├── Dockerfile
+│   ├── requirements.txt
+│   └── .env.example            # copy to .env (git-ignored)
+├── walmart_proj/               # dbt project
+│   ├── models/
+│   │   ├── source/             # source table definitions
+│   │   ├── silver_t/           # per-table incremental models
+│   │   ├── silver_b/           # OBT (one big table), joined from silver_t
+│   │   └── gold/               # fact + dimension tables
+│   ├── snapshots/              # SCD2 snapshots for the 4 dimension tables
+│   ├── tests/                  # singular / custom data quality tests
+│   ├── macros/
+│   ├── dbt_project.yml
+│   ├── packages.yml
+│   └── profiles.yml            # credentials come from env vars only
 ├── assets/
 │   ├── databricks_workflow.png
 │   └── airflow_dag_success.png
-├── airflow/
-│   └── dags/
-│       └── orchestrate.py
-├── dbt_project.yml
-├── packages.yml
 └── README.md
 ```
 
@@ -137,11 +143,11 @@ walmart_proj/
 
 ```bash
 git clone <your-repo-url>
-cd walmart_proj
-cp .env.example .env
+cd <repo>
+cp airflow/.env.example airflow/.env
 ```
 
-`.env` (never commit this):
+`airflow/.env` (never commit this; only `.env.example` with placeholder values is committed):
 
 ```env
 DATABRICKS_HOST=https://<your-workspace>.cloud.databricks.com
@@ -150,7 +156,7 @@ DATABRICKS_JOB_ID=123456789
 DATABRICKS_HTTP_PATH=/sql/1.0/warehouses/xxxxxxxx
 ```
 
-dbt profile (`~/.dbt/profiles.yml`):
+dbt profile (`walmart_proj/profiles.yml`). It is committed because it contains no secret, only `env_var()` lookups. The Airflow container finds it through `DBT_PROFILES_DIR=/opt/airflow/walmart_proj`; for a local run, export the same variables in your shell and run dbt from `walmart_proj/`:
 
 ```yaml
 walmart_proj:
@@ -182,7 +188,7 @@ docker compose exec airflow-scheduler \
 
 ### 3. Run dbt manually (optional)
 
-Build and test one layer at a time, in the same order as the Airflow DAG:
+Run these from `walmart_proj/` (with the `DATABRICKS_*` variables exported). Build and test one layer at a time, in the same order as the Airflow DAG:
 
 ```bash
 dbt deps                                         # install dbt_utils
@@ -582,9 +588,10 @@ OBT. This project deliberately does not, for two reasons:
   one-to-many, every dimension column pulled from the OBT is repeated once per
   order line. `DISTINCT` treats a symptom, not the cause.
 
-In practice, snapshotting OBT-derived dimensions produced visibly more rows
-than the same snapshots built from `silver_t`, because the SCD2 `timestamp`
-strategy picked up spurious "changes" from the join.
+The same risk carries over to snapshots: if snapshots were built on OBT-derived
+dimensions, duplicated rows that differ in any column could be recorded as
+spurious SCD2 versions. Building each snapshot from its own `silver_t` table
+avoids this.
 
 #### The OBT itself joins 5 tables, not 6
 
