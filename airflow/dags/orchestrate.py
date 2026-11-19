@@ -85,7 +85,7 @@ def orchestrate():
     singular_tests = BashOperator(
         task_id='singular_tests',
         cwd='/opt/airflow/walmart_proj',
-        bash_command='dbt test --select singular,test_type:generic'
+        bash_command='dbt test --select test_type:singular'
     )
 
     snapshots = BashOperator(
