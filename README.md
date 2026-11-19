@@ -659,7 +659,9 @@ order by c.customer_id;
 
 The query returns exactly 9 rows — Keith Jenkins, Joshua Le, Karen Robinson, and 6 others who have registered but never placed an order. They are real customers. **Any dimension built from the OBT loses them.**
 
-**Resolution:** This project removes all `gold/ephemeral/` models. Dimensions are built directly from their own `silver_t` tables. A customer with no orders is still a customer, and the dimension tracks them. This also avoids the `DISTINCT` + `CURRENT_TIMESTAMP()` issue that breaks deduplication entirely.
+**Resolution:** This project removes all `gold/ephemeral/` models. Dimensions and snapshots are built directly from their own `silver_t` tables. A customer with no orders is still a customer, and the dimension tracks them. 
+
+If we had kept the tutorial's approach, the downstream `dim_customers` and `dim_customers_snapshot` would also inherit this flaw, permanently locking in exactly 1,991 rows. Those 9 real customers would be silently lost from the historical record forever. Building directly from `silver_t` ensures 100% coverage (2,000 customers) and also avoids the `DISTINCT` + `CURRENT_TIMESTAMP()` issue that breaks deduplication entirely.
 
 ### Gold Dimensions: SCD1, Incrementally
 
