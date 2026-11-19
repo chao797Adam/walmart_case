@@ -180,16 +180,32 @@ docker compose exec airflow-scheduler \
 
 ### 3. Run dbt manually (optional)
 
+Build and test one layer at a time, in the same order as the Airflow DAG:
+
 ```bash
-dbt deps
-dbt source freshness
-dbt run  --select silver_t
-dbt test --select silver_t
-dbt run  --select silver_b
-dbt test --select silver_b
-dbt run  --select gold
-dbt snapshot
+dbt deps                                         # install dbt_utils
+
+dbt run  --select silver_t                       # 6 cleaned incremental models
+dbt test --select "silver_t,test_type:generic"   # 26 generic tests (unique, not_null, relationships, ...)
+
+dbt run  --select silver_b                       # the OBT
+dbt test --select silver_b                       # 5 not_null tests (warn)
+
+dbt run  --select gold                           # 4 dimensions + 2 facts
+dbt test --select gold                           # 22 generic + 2 singular tests
+
+dbt snapshot                                     # SCD2 history
 ```
+
+Useful variants:
+
+| Goal | Command |
+|---|---|
+| Run and test a layer in dependency order | `dbt build --select silver_t` |
+| Only generic tests | `dbt test --select "test_type:generic"` |
+| Only singular tests | `dbt test --select "test_type:singular"` |
+| One model and its tests | `dbt build --select orders_t` |
+| Rebuild incremental models from scratch | `dbt run --select silver_t --full-refresh` |
 
 ---
 
@@ -598,8 +614,6 @@ orders_t  (center)
   ├── products_t     (N : 1, via order_items.product_id)
   └── stores_t       (N : 1)
 ```
-
-**Which copy of a join key the OBT keeps.** Each join key exists in two tables (for example `orders_t.customer_id` and `customers_t.customer_id`). The OBT keeps only one copy, taken from the side that is always present under a `LEFT JOIN`: `order_id`, `store_id` and `customer_id` from `orders_t`, and `product_id` and `order_item_id` from `order_items_t`. Taking the key from the right-hand table would return `NULL` whenever the join finds no match, so the key columns would stop describing the fact rows. Unmatched joins show up as `NULL` in descriptive columns such as names instead.
 
 If order-to-employee attribution is ever needed, it should be introduced at
 the **source** (add `employee_id` to the `orders` source), not inferred from
@@ -1016,7 +1030,7 @@ or a `--full-refresh`.
 
 | # | Deviation | Why |
 |---|---|---|
-| 4 | `qualify row_number() = 1` on every `silver_t` model, partitioned by that table's own primary key | Bronze is append-only, so one batch can hold several versions of the same key (the tutorial's upserted Bronze does not, so its Silver needs no dedup). `MERGE` requires one row per key in the incoming batch; partitioning by the wrong key silently corrupts the dedup |
+| 4 | `qualify row_number() = 1` on every `silver_t` model, partitioned by that table's own primary key | Bronze is append-only, so a batch can contain several versions of the same key, and `MERGE` fails if one key appears more than once in the batch. The tutorial's Bronze is already upserted, so it needs no dedup. Each model must partition by its own primary key, otherwise valid rows are dropped silently |
 
 ### Silver (`silver_t`) — type casting
 
