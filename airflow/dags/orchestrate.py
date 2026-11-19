@@ -96,6 +96,6 @@ def orchestrate():
      
     ingest_bronze() >> silver_technical \
         >> silver_technical_tests >> silver_business >> silver_business_tests \
-        >> gold >> gold_tests  >> snapshots
+        >> gold >> gold_tests  >> singular_tests >> snapshots
 
 orchestrate_dag = orchestrate()
