@@ -557,6 +557,35 @@ At this dataset's scale the effect is material. The measured row counts:
 The 6-table version is ~10× larger than the 5-table version (300,513 vs.
 30,021 rows), entirely from a join that carries no order-level meaning.
 
+The counts can be reproduced with one query that adds a join at a time:
+
+```sql
+select 1 as step_no, 'orders_t' as step, count(*) as row_count
+from walmart.silver_t.orders_t
+
+union all
+select 2, '+ order_items', count(*)
+from walmart.silver_t.orders_t o
+left join walmart.silver_t.order_items_t oi
+    on o.order_id = oi.order_id
+
+union all
+select 3, '+ order_items + employees (via store_id)', count(*)
+from walmart.silver_t.orders_t o
+left join walmart.silver_t.order_items_t oi
+    on o.order_id = oi.order_id
+left join walmart.silver_t.employees_t e
+    on o.store_id = e.store_id
+
+order by step_no;
+```
+
+| Step | Row count | Why |
+|---|---|---|
+| `orders_t` | 10,000 | One row per order |
+| `+ order_items` | 30,021 | Intended fan-out: one order has several line items |
+| `+ employees (via store_id)` | 300,513 | Unintended: every order row is repeated once per employee at that store (about 10 per store) |
+
 At production scale (say, 10M orders), that same pattern would produce
 **300M rows instead of 30M** — a 10× difference in storage, scan cost,
 shuffle, and network I/O, for zero analytical value. This is why the OBT in
@@ -569,6 +598,8 @@ orders_t  (center)
   ├── products_t     (N : 1, via order_items.product_id)
   └── stores_t       (N : 1)
 ```
+
+**Which copy of a join key the OBT keeps.** Each join key exists in two tables (for example `orders_t.customer_id` and `customers_t.customer_id`). The OBT keeps only one copy, taken from the side that is always present under a `LEFT JOIN`: `order_id`, `store_id` and `customer_id` from `orders_t`, and `product_id` and `order_item_id` from `order_items_t`. Taking the key from the right-hand table would return `NULL` whenever the join finds no match, so the key columns would stop describing the fact rows. Unmatched joins show up as `NULL` in descriptive columns such as names instead.
 
 If order-to-employee attribution is ever needed, it should be introduced at
 the **source** (add `employee_id` to the `orders` source), not inferred from

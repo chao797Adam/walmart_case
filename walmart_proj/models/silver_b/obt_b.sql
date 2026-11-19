@@ -3,6 +3,7 @@
 select
     -- Orders
     o.order_id,
+    o.customer_id,
     o.store_id,
     o.order_timestamp,
     o.payment_method,
@@ -15,7 +16,6 @@ select
     current_timestamp() as obt_b_processed_at,
 
     -- Customers
-    c.customer_id,
     c.first_name as customer_first_name,
     c.last_name as customer_last_name,
     c.email as customer_email,
@@ -30,6 +30,7 @@ select
 
     -- Order Items
     oi.order_item_id,
+    oi.product_id,
     oi.quantity,
     oi.unit_price,
     oi.line_amount,
@@ -39,7 +40,6 @@ select
     oi.processed_at as order_item_processed_at,
 
     -- Products
-    p.product_id,
     p.product_name,
     p.category,
     p.brand,
