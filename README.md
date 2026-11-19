@@ -775,10 +775,6 @@ An empty result confirms no duplicates. This was run against all four
 dimension tables (`dim_customers`, `dim_products`, `dim_stores`,
 `dim_employees`).
 
-> **Naming note:** fact models use the `fact_*` prefix in the repo
-> (`fact_orders.sql`, `fact_order_items.sql`); the `fct_*` name appears in
-> older test configs. Treat `fact_*` as canonical.
-
 ### `eph_orders.sql`: a flawed legacy model from the tutorial, removed
 
 The tutorial's `eph_orders.sql` tried to recover order-grain rows from the
