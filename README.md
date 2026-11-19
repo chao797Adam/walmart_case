@@ -1010,13 +1010,13 @@ or a `--full-refresh`.
 |---|---|---|
 | 1 | Static CSV snapshot in a Volume, not a live PostgreSQL connection | The tutorial's Ghost-hosted PostgreSQL instance is gone |
 | 2 | Auto Loader (`cloudFiles`), not Lakeflow Connect | Lakeflow Connect needs a live database; Auto Loader is the right tool for files in a Volume |
-| 3 | File-level incrementality only | Auto Loader tracks files, not rows; row-level CDC happens in Silver |
+| 3 | File-level incrementality only; Bronze is append-only | Auto Loader tracks files, not rows. The tutorial's Lakeflow Connect pipeline is configured with a cursor column and primary key, which upserts into Bronze, so Bronze holds one current row per key. Here, row-level handling happens in Silver |
 
 ### Silver (`silver_t`)
 
 | # | Deviation | Why |
 |---|---|---|
-| 4 | `qualify row_number() = 1` on every `silver_t` model, partitioned by that table's own primary key | `MERGE` requires one row per key in the incoming batch; partitioning by the wrong key silently corrupts the dedup |
+| 4 | `qualify row_number() = 1` on every `silver_t` model, partitioned by that table's own primary key | Bronze is append-only, so one batch can hold several versions of the same key (the tutorial's upserted Bronze does not, so its Silver needs no dedup). `MERGE` requires one row per key in the incoming batch; partitioning by the wrong key silently corrupts the dedup |
 
 ### Silver (`silver_t`) — type casting
 
