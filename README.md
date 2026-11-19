@@ -25,7 +25,7 @@ An end-to-end ELT pipeline that ingests a Walmart retail dataset (a static CSV s
 flowchart TD
     A["Raw CSV files in a Databricks Volume"] -->|"Auto Loader (cloudFiles), file-level, per-table"| B["Bronze - raw tables in Databricks"]
     B -->|"dbt incremental"| C["Silver_t - cleaned per-table models"]
-    C -->|"dbt table model - LEFT JOIN x5"| D["Silver_b - One Big Table"]
+    C -->|"dbt table model - LEFT JOIN x4"| D["Silver_b - One Big Table"]
     C -->|"dbt incremental"| E["Gold - facts + dimensions"]
     C -->|"dbt snapshot - timestamp strategy"| F["Snapshots - SCD Type 2 dimensions"]
 ```
@@ -345,9 +345,9 @@ ingest_bronze
 | -------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
 | `ingest_bronze`            | Python `@task`: triggers the `walmart ingest` Databricks Job via `WorkspaceClient.jobs.run_now()`, polls `get_run()` every 5s, raises on non-`SUCCESS`. The job runs a **file-level** Auto Loader stream, not row-level CDC — see [Bronze Ingestion](#bronze-ingestion-auto-loader-file-level-incremental). |
 | `silver_technical`         | `dbt run --select silver_t` — builds the six cleaned per-table models.                                                              |
-| `silver_technical_tests`   | `dbt test --select silver_t` — 25 tests on `silver_t` (dbt reports `26`, because the selector also pulls in `assert_fact_orders_matches_orders_t`). |
+| `silver_technical_tests`   | `dbt test --select silver_t` — 26 generic tests on `silver_t` (dbt reports `27`, because the selector also pulls in `assert_fact_orders_matches_orders_t`). |
 | `silver_business`          | `dbt run --select silver_b` — builds the One Big Table (OBT).                                                                        |
-| `silver_business_tests`    | `dbt test --select silver_b` — the singular `test_obt` on the OBT.                                                                   |
+| `silver_business_tests`    | `dbt test --select silver_b` — 5 `not_null` tests (severity `warn`) on the key columns of `obt_b`.                                                                   |
 | `gold`                     | `dbt run --select gold` — builds all four dimensions and both fact tables (`fact_orders`, `fact_order_items`).                       |
 | `gold_tests`               | `dbt test --select gold` — 24 tests (22 generic + 2 singular) on the Gold layer.                                                     |
 | `snapshots`                | `dbt snapshot` — SCD2 history for the four dimensions.                                                                               |
@@ -709,7 +709,7 @@ redundant — they answer two structurally different questions:
 An SCD1 table structurally *cannot* answer the second question (no historical
 rows exist to answer it with), and using the SCD2 snapshot as the default
 "what's current" lookup would mean every query pays the cost of filtering
-`dbt_valid_to_current` on a much larger, ever-growing table for no benefit.
+`dbt_valid_to is null` on a much larger, ever-growing table for no benefit.
 Keeping both isn't double-covering the same need — it's two purpose-built
 outputs off the same Silver source, each optimized for the query pattern it
 serves.
@@ -783,11 +783,11 @@ This project does not include one, for two independent reasons:
 
 Tests are split across two layers plus singular tests:
 
-- **Silver (`silver_t`)** — 25 generic tests declared in `properties.yml`, all passing.
+- **Silver (`silver_t`)** — 26 generic tests declared in `properties.yml`, all passing. `silver_b` (OBT) adds 5 `not_null` tests with severity `warn`.
 - **Gold (`dim_*`, `fact_*`)** — 22 generic tests declared in the Gold `properties.yml`, plus 2 singular tests (`assert_*`). Total 24 tests selected by `dbt test --select gold`.
-- **Singular tests** — 4 custom SQL tests in `tests/`: one structural (`obt_b`), two on the Gold layer (cross-table row counts, amount consistency), and one on the Bronze layer (`_rescued_data` populated by schema evolution).
+- **Singular tests** — 3 custom SQL tests in `tests/`: two on the Gold layer (cross-table row counts, amount consistency) and one on the Bronze layer (`_rescued_data` populated by schema evolution).
 
-### Silver layer tests — 26 tests
+### Silver_t layer tests — 26 tests
 
 Every `_t` model carries the same baseline: primary key `unique` + `not_null`,
 foreign keys `not_null`, referential integrity via `relationships`, and
@@ -829,6 +829,18 @@ non-negativity checks on numeric columns.
   `employees_t.store_id → stores_t.store_id` → `relationships`.
 - **Non-negativity** on amounts (`price`, `total_amount`, `unit_price`,
   `line_amount`, `salary` ≥ 0) and **positivity** on `quantity` (> 0).
+
+### Silver_b (OBT) tests — 5 tests
+
+`obt_b` is the one-big-table used for comparison with the `silver_t` approach. Its five key columns are checked with `not_null`, with severity `warn`, so a gap is reported but does not block downstream models.
+
+| # | Model | Column | Test |
+|---|---|---|---|
+| 1 | `obt_b` | `order_id` | `not_null` (warn) |
+| 2 | `obt_b` | `product_id` | `not_null` (warn) |
+| 3 | `obt_b` | `store_id` | `not_null` (warn) |
+| 4 | `obt_b` | `order_item_id` | `not_null` (warn) |
+| 5 | `obt_b` | `customer_id` | `not_null` (warn) |
 
 ### Gold layer tests
 
@@ -878,15 +890,9 @@ exactly — expected, since the OBT's only remaining fan-out source is
 
 | File | Target | What it checks | Severity |
 |---|---|---|---|
-| `test_obt.sql` | `obt_b` | `order_id`, `product_id`, `store_id`, `order_item_id`, `customer_id` are all non-null in the OBT | `warn` |
 | `assert_fact_orders_matches_orders_t.sql` | `fact_orders` vs `orders_t` | Row counts match — same grain (order), same number of rows | `error` |
 | `assert_fact_orders_matches_order_items.sql` | `fact_orders` vs `fact_order_items` | `SUM(total_amount)` ≈ `SUM(line_amount)` per order, tolerance 0.01 | `error` |
 | `assert_bronze_no_rescued_data.sql` | `walmart.bronze.*` | No Bronze table has `_rescued_data` populated — i.e. the source CSV schema exactly matches the Bronze schema | `error` |
-
-`test_obt.sql` is set to `warn` rather than `error` on purpose — `obt_b` is
-built with `LEFT JOIN`s, so a NULL foreign key is a *legitimate* state (e.g.
-an order with no matching product), but the test still surfaces it so
-unexpected NULL rates don't go unnoticed.
 
 The `assert_*` tests are **`error`** severity.
 
@@ -935,8 +941,8 @@ wrong.
 - **Dimension uniqueness enforced in SQL** (via `qualify row_number()`), then
   spot-checked with `GROUP BY ... HAVING COUNT(*) > 1` rather than relying
   on `DISTINCT`.
-- **OBT-level structural tests** (singular) catch join fan-out and NULL
-  foreign keys that generic column tests wouldn't see.
+- **OBT key-column checks** (`not_null`, severity `warn`) catch NULL keys
+  introduced by the joins.
 
 Run all tests:
 
@@ -1012,7 +1018,7 @@ silently produce wrong results.
 
 | # | Deviation | Why |
 |---|---|---|
-| 6 | OBT joins 5 tables, not 6 — `employees` is excluded | Joining `employees` via `store_id` multiplies every order row by the number of employees at the store, with no business meaning (`orders` has no `employee_id`). At scale this 5× row inflation is not worth the (non-)information |
+| 6 | OBT joins 5 tables, not 6 — `employees` is excluded | Joining `employees` via `store_id` multiplies every order row by the number of employees at the store, with no business meaning (`orders` has no `employee_id`). At scale this 10× row inflation is not worth the (non-)information |
 
 ### Gold — Facts
 

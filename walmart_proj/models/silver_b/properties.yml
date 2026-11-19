@@ -1,0 +1,28 @@
+models:
+  - name: obt_b
+    columns:
+      - name: order_id
+        data_tests:
+          - not_null:
+              config:
+                severity: warn
+      - name: product_id
+        data_tests:
+          - not_null:
+              config:
+                severity: warn
+      - name: store_id
+        data_tests:
+          - not_null:
+              config:
+                severity: warn
+      - name: order_item_id
+        data_tests:
+          - not_null:
+              config:
+                severity: warn
+      - name: customer_id
+        data_tests:
+          - not_null:
+              config:
+                severity: warn
