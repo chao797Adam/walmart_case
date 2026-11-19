@@ -470,11 +470,11 @@ uploaded to a raw Volume
 from there via Auto Loader (see
 [Bronze Ingestion](#bronze-ingestion-dynamic-multi-table-pipeline-via-auto-loader)).
 
-This has one consequence worth being explicit about: **the row-level CDC
+This has one consequence worth being explicit about: **the timestamp-based incremental 
 cursor (`updated_timestamp`) still works in Silver**, because it's a field
 baked into the CSV data itself, not something derived from a live database
 connection — `silver_t` models can still filter
-`where updated_timestamp > max(updated_timestamp)` correctly. What's
+`where updated_timestamp >= max(updated_timestamp)` correctly. What's
 different is only *how new data arrives at Bronze* (Auto Loader watching a
 Volume for new files, file-level) versus what the original design
 assumed (a live database pulling rows directly, row-level). If this pipeline
@@ -704,14 +704,9 @@ from base_customers
 qualify row_number() over (partition by customer_id order by updated_timestamp desc) = 1
 ```
 
-This is correct, but not efficient. `customers_t` itself is `incremental` and
-**append-only at the row-version level** — every time a customer's `email` or
-`address` changes, `customers_t` gains a *new* row for that `customer_id`
-rather than overwriting the old one (this is what lets the SCD2 snapshot
-below reconstruct history). That means `customers_t` grows without bound as
-customers get updated over time, and a `table`-materialized `dim_customers`
-re-scans and re-sorts *all* of that accumulated history on every single run,
-just to figure out which row is current — a cost that keeps growing.
+This approach is correct, but it rebuilds the entire Gold dimension on every run, even when only a small number of customer records have changed. Since `customers_t` already maintains the latest record per customer through incremental `MERGE`, repeatedly rebuilding `dim_customers` introduces unnecessary processing.
+
+Switching the Gold dimension to an incremental model allows it to process newer records and update matching customer keys in place, preserving SCD Type 1 behavior.
 
 Switched to `incremental`:
 
@@ -1099,7 +1094,7 @@ silently produce wrong results.
 | # | Deviation | Why |
 |---|---|---|
 | 9 | Dimensions built from `silver_t`, not `SELECT DISTINCT` on the OBT | Three independent reasons: (a) `DISTINCT` is fragile: it only collapses rows identical across every selected column; (b) the OBT inherits the order → order_items row duplication; (c) the OBT is `orders`-centered, so it silently drops entities with no fact rows — 9 of 2,000 customers have zero orders and would be lost |
-| 10 | Dimensions are `incremental`, not `table` | `silver_t` is append-only row versions; a full rebuild re-scans unbounded history |
+| 10 | Dimensions are `incremental`, not `table` | Avoids rebuilding the entire Gold dimension on every run; new or updated records from `silver_t` are merged into Gold using `unique_key`. |
 | 11 | SCD1 gold dimensions and SCD2 snapshots both exist | "current" vs "historical" are different query patterns |
 
 ---
