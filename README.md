@@ -33,7 +33,7 @@ flowchart TD
 > **Diagram vs. DAG.** The diagram above shows **data lineage** — which layer
 > reads from which. The Airflow DAG executes these steps **linearly**:
 > `ingest_bronze → silver_technical → silver_technical_tests → silver_business →
-> silver_business_tests → gold → gold_tests → snapshots`. The two are not the
+> silver_business_tests → gold → gold_tests → singular_tests → snapshots`. The two are not the
 > same thing. Execution order is a scheduling choice (run one step after
 > another so a failure blocks everything downstream); data lineage is a fact
 > about where each model reads from. For example, `snapshots` runs *after*
@@ -194,6 +194,8 @@ dbt test --select silver_b                       # 5 not_null tests (warn)
 dbt run  --select gold                           # 4 dimensions + 2 facts
 dbt test --select gold                           # 22 generic + 2 singular tests
 
+**Note:** The Quickstart command `dbt test --select gold` runs both generic tests and applicable singular tests associated with the Gold models in a single step. In the Airflow DAG, these tests are separated into two tasks: `gold_tests` runs generic tests, while `singular_tests` runs singular tests across the project. This separation provides clearer task-level monitoring and failure tracking.
+
 dbt snapshot                                     # SCD2 history
 ```
 
@@ -344,9 +346,9 @@ before trusting downstream Silver/Gold builds on top of it.
 
 ## Orchestration (Airflow)
 
-The `orchestrate` DAG chains the whole flow into one observable pipeline:
+The `orchestrate` DAG chains the entire ELT flow into one observable pipeline:
 
-```
+```text
 ingest_bronze
   → silver_technical
   → silver_technical_tests
@@ -354,29 +356,36 @@ ingest_bronze
   → silver_business_tests
   → gold
   → gold_tests
+  → singular_tests
   → snapshots
 ```
 
-| Task                       | What it does                                                                                                                        |
-| -------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
-| `ingest_bronze`            | Python `@task`: triggers the `walmart ingest` Databricks Job via `WorkspaceClient.jobs.run_now()`, polls `get_run()` every 5s, raises on non-`SUCCESS`. The job runs a **file-level** Auto Loader stream, not row-level CDC — see [Bronze Ingestion](#bronze-ingestion-dynamic-multi-table-pipeline-via-auto-loader). |
-| `silver_technical`         | `dbt run --select silver_t` — builds the six cleaned per-table models.                                                              |
-| `silver_technical_tests`   | `dbt test --select silver_t` — 26 generic tests on `silver_t` (dbt reports `27`, because the selector also pulls in `assert_fact_orders_matches_orders_t`). |
-| `silver_business`          | `dbt run --select silver_b` — builds the One Big Table (OBT).                                                                        |
-| `silver_business_tests`    | `dbt test --select silver_b` — 5 `not_null` tests (severity `warn`) on the key columns of `obt_b`.                                                                   |
-| `gold`                     | `dbt run --select gold` — builds all four dimensions and both fact tables (`fact_orders`, `fact_order_items`).                       |
-| `gold_tests`               | `dbt test --select gold` — 24 tests (22 generic + 2 singular) on the Gold layer.                                                     |
-| `snapshots`                | `dbt snapshot` — SCD2 history for the four dimensions.                                                                               |
+| Task | What it does |
+|---|---|
+| `ingest_bronze` | Python `@task`: triggers the `walmart ingest` Databricks Job via `WorkspaceClient.jobs.run_now()`, polls `get_run()` every 5 seconds, and raises an exception if the run does not succeed. The job runs a **file-level** Auto Loader stream, not row-level CDC — see [Bronze Ingestion](#bronze-ingestion-dynamic-multi-table-pipeline-via-auto-loader). |
+| `silver_technical` | `dbt run --select silver_t` — builds the six cleaned per-table models. |
+| `silver_technical_tests` | `dbt test --select silver_t,test_type:generic` — executes generic tests on `silver_t`. The selector may also include the singular test `assert_fact_orders_matches_orders_t`, depending on dbt selector resolution. |
+| `silver_business` | `dbt run --select silver_b` — builds the One Big Table (OBT). |
+| `silver_business_tests` | `dbt test --select silver_b,test_type:generic` — executes generic tests on the business-level Silver layer, including the 5 `not_null` tests (severity `warn`) on key columns of `obt_b`. |
+| `gold` | `dbt run --select gold` — builds all four dimensions and both fact tables (`fact_orders`, `fact_order_items`). |
+| `gold_tests` | `dbt test --select gold,test_type:generic` — executes generic tests against the Gold layer (22 generic tests). |
+| `singular_tests` | `dbt test --select "test_type:singular` — runs the singular test task as a separate Airflow step after Gold tests. |
+| `snapshots` | `dbt snapshot` — maintains SCD Type 2 history for the four dimensions. |
 
-Tasks are chained with `>>` so a failure upstream (e.g. a Silver test or the
-Gold tests) **blocks everything downstream** — Gold is never built on stale or
-broken Silver data, and `snapshots` is never taken on a broken Gold layer.
+Tasks are chained with `>>` so a failure upstream (e.g. a Silver test, Gold test, or singular test) **blocks everything downstream** — Gold is never built on stale or broken Silver data, and `snapshots` are never taken on a failed Gold validation.
 
-<details>
-<summary><b>Why the Databricks SDK instead of <code>DatabricksRunNowOperator</code>?</b></summary>
+### Databricks Job Integration
 
-Both call the same Databricks Jobs API. The SDK route was chosen for explicit
-control over the polling loop and failure semantics:
+The `ingest_bronze` task triggers the Databricks Job using the Databricks SDK:
+
+- `WorkspaceClient.jobs.run_now()` submits the job.
+- `WorkspaceClient.jobs.get_run()` polls the run status every 5 seconds.
+- The task waits until the Databricks run reaches a terminal state.
+- Downstream tasks proceed only if the Databricks job completes successfully.
+
+### Why the Databricks SDK instead of `DatabricksRunNowOperator`?
+
+Both approaches call the Databricks Jobs API. The SDK route was chosen for explicit control over the polling loop and failure semantics:
 
 ```python
 from databricks.sdk import WorkspaceClient
@@ -386,10 +395,13 @@ ws = WorkspaceClient(
     host=os.getenv("DATABRICKS_HOST"),
     token=os.getenv("DATABRICKS_TOKEN"),
 )
+
 job_id = int(os.getenv("DATABRICKS_JOB_ID"))
 run = ws.jobs.run_now(job_id=job_id)
+
 while True:
     state = ws.jobs.get_run(run.run_id).state
+
     if state.life_cycle_state in {
         RunLifeCycleState.TERMINATED,
         RunLifeCycleState.SKIPPED,
@@ -398,15 +410,29 @@ while True:
         if state.result_state == RunResultState.SUCCESS:
             break
         raise Exception(f"Job failed: {state.result_state}")
+
     time.sleep(5)
 ```
 
-Credentials are read from `DATABRICKS_HOST` / `DATABRICKS_TOKEN` env vars — never
-hardcoded.
+Credentials are read from `DATABRICKS_HOST`, `DATABRICKS_TOKEN`, and `DATABRICKS_JOB_ID` environment variables rather than hardcoded in the DAG.
 
-</details>
+### Dependency Management & Failure Handling
 
----
+Tasks are chained sequentially using Airflow's `>>` dependency operator. Each task must complete successfully before the next task starts.
+
+If Databricks ingestion fails, dbt models fail to build, or a data quality test returns a failure, Airflow marks the task as failed and prevents downstream execution. This ensures that Gold models and historical snapshots are not generated from failed upstream data or failed validations.
+
+### Scheduling
+
+The DAG is currently configured for manual execution:
+
+```python
+schedule=None
+catchup=False
+```
+
+The pipeline is triggered manually through the Airflow UI. The DAG start date is configured using the `Australia/Melbourne` timezone.
+
 
 ## Design Decisions
 
