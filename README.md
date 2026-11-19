@@ -110,6 +110,9 @@ walmart_proj/
 ├── snapshots/           # SCD2 snapshots for the 4 dimension tables
 ├── tests/               # singular / custom data quality tests
 ├── macros/
+├── assets/
+│   ├── databricks_workflow.png
+│   └── airflow_dag_success.png
 ├── airflow/
 │   └── dags/
 │       └── orchestrate.py
@@ -432,6 +435,14 @@ catchup=False
 
 The pipeline is triggered manually through the Airflow UI. The DAG start date is configured using the `Australia/Melbourne` timezone.
 
+### Airflow Execution — Verified
+
+The full DAG was executed successfully on consecutive runs,
+validating end-to-end orchestration and repeatability.
+
+![Airflow DAG Successful Execution](assets/airflow_dag_success.png)
+
+---
 
 ## Design Decisions
 
