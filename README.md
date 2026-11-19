@@ -48,13 +48,12 @@ flowchart TD
    (`orders`, `customers`, `products`, `order_items`, `stores`, `employees`),
    uploaded to a raw Volume. Each row still carries `updated_timestamp` and
    `created_timestamp` fields baked into the CSV itself, which is what makes
-   row-level CDC possible downstream in Silver.
+   timestamp-based incremental processing possible downstream in Silver.
 2. **Bronze** — A per-table Auto Loader (`cloudFiles`) stream, driven by a
    parameterized notebook (`dbutils.widgets`), ingests new files
    from the raw Volume into `bronze.*`. See
    [Bronze Ingestion](#bronze-ingestion-dynamic-multi-table-pipeline-via-auto-loader) below —
-   this is **file-level** incrementality, distinct from the row-level CDC that
-   happens one layer up, in Silver.
+   this is **file-level** incremental ingestion, unlike the row-level CDC used by the reference tutorial's Lakeflow Connect pipeline to ingest data from PostgreSQL.
 3. **Silver_t** — One dbt **incremental model per table**, using
    `is_incremental()` + `updated_timestamp` as the cursor column.
 4. **Silver_b** — A single **One Big Table (OBT)**, built by `LEFT JOIN`-ing
