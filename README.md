@@ -540,8 +540,8 @@ The course builds dimensions like `dim_customers` by `SELECT DISTINCT` from the
 OBT. This project deliberately does not, for two reasons:
 
 - **`DISTINCT` doesn't guarantee one row per business key.** It only removes
-  rows identical across *every* selected column. Any column that varies row to
-  row — like `current_timestamp()` audit columns — defeats it.
+  rows identical across *every* selected column. If any selected column differs
+  between the duplicated rows, they all survive.
 - **OBT inherits row duplication.** Because `orders` joins to `order_items`
   one-to-many, every dimension column pulled from the OBT is repeated once per
   order line. `DISTINCT` treats a symptom, not the cause.
@@ -636,7 +636,7 @@ output.
 
 The two reasons above are about **row inflation** — the OBT has too *many* rows per entity. There is a symmetric problem in the other direction: the OBT has too *few* entities.
 
-The original tutorial builds `dim_customers` by extracting from the OBT via an `ephemeral` model (`eph_customers.sql`) using `SELECT DISTINCT`. **This is a critical anti-pattern.** Because `obt_b` is `orders`-centered, a customer who has never placed an order appears in `customers_t` but **not** in the OBT. Building dimensions from the OBT silently drops these customers.
+The original tutorial builds `dim_customers` by extracting from the OBT via an `ephemeral` model (`eph_customers.sql`) using `SELECT DISTINCT`. Because `obt_b` is `orders`-centered, a customer who has never placed an order appears in `customers_t` but **not** in the OBT. Building dimensions from the OBT silently drops these customers.
 
 This isn't just theoretical — it's directly measurable in the tutorial's own output. *(Reference: The tutorial video around the **3h 58m mark** shows the `eph_customers` query returning exactly 1,991 rows, whereas the source `customers_t` has 2,000).*
 
@@ -646,7 +646,7 @@ This isn't just theoretical — it's directly measurable in the tutorial's own o
 | Tutorial's `eph_customers` (from OBT) | **1,991** |
 | **Missing** | **9** |
 
-The 9 missing customers are exactly those with zero orders. Verified with:
+The 9 missing customers are exactly those with zero orders. The same gap appears in this project's own `obt_b`, verified with:
 
 ```sql
 select c.customer_id, c.first_name, c.last_name, c.email
@@ -661,7 +661,7 @@ The query returns exactly 9 rows — Keith Jenkins, Joshua Le, Karen Robinson, a
 
 **Resolution:** This project removes all `gold/ephemeral/` models. Dimensions and snapshots are built directly from their own `silver_t` tables. A customer with no orders is still a customer, and the dimension tracks them. 
 
-If we had kept the tutorial's approach, the downstream `dim_customers` and `dim_customers_snapshot` would also inherit this flaw, permanently locking in exactly 1,991 rows. Those 9 real customers would be silently lost from the historical record forever. Building directly from `silver_t` ensures 100% coverage (2,000 customers) and also avoids the `DISTINCT` + `CURRENT_TIMESTAMP()` issue that breaks deduplication entirely.
+If we had kept the tutorial's approach, the downstream `dim_customers` and `dim_customers_snapshot` would also inherit this flaw, permanently locking in exactly 1,991 rows. Those 9 real customers would be silently lost from the historical record forever. Building directly from `silver_t` ensures 100% coverage (2,000 customers) and does not depend on `DISTINCT` for deduplication.
 
 ### Gold Dimensions: SCD1, Incrementally
 
@@ -784,10 +784,9 @@ from {{ ref('obt_b') }}
 
 This is exactly the anti-pattern already called out in
 [Dimensions are built from `silver_t`, not from the OBT](#dimensions-are-built-from-silver_t-not-from-the-obt):
-`obt_b_processed_at` is a `current_timestamp()` audit column, which by
-definition can differ across the fanned-out rows for the same `order_id` —
-so `DISTINCT` here is structurally incapable of collapsing back to one row
-per order.
+`DISTINCT` only collapses rows that are identical across every selected
+column, so it does not guarantee one row per `order_id` once the OBT has
+fanned out.
 
 **Resolution:** the file was removed. An order-grain fact table is now
 provided as **`fact_orders.sql`** — built **directly from `orders_t`** (not
@@ -810,6 +809,15 @@ This project does not include one, for two independent reasons:
    (`order_status`) is better modeled as an event log than as an SCD2
    version chain. This is why the four `dim_*_snapshot` tables cover
    customers, products, stores, and employees — but not orders.
+
+
+### Fixing the grain violation in the tutorial's `fact_orders`
+
+In the reference tutorial, `fact_orders` is derived from the OBT. Around the **4h 09m mark** the author runs a check that counts `order_item_id` per `order_id` (`HAVING COUNT(order_item_id) > 1`), and it returns counts such as 50 and 70. So the tutorial's `fact_orders` is not at order grain.
+
+The OBT it comes from joins six tables, including the `employees` fan-out, so it holds about 300,000 rows for 10,000 orders, roughly 30 rows per order on average. `DISTINCT` does not bring that back to one row per order. A dashboard that sums `total_amount` on such a table would overcount revenue by the same duplication factor.
+
+**Resolution:** In this project, `fact_orders` is built from `orders_t` and deduplicated with `qualify row_number() = 1`. A singular test (`assert_fact_orders_matches_orders_t`) guarantees that its row count equals `orders_t` (10,000 rows). Line-item detail lives in the separate `fact_order_items` table (30,021 rows).
 
 ---
 
@@ -1065,7 +1073,7 @@ silently produce wrong results.
 
 | # | Deviation | Why |
 |---|---|---|
-| 9 | Dimensions built from `silver_t`, not `SELECT DISTINCT` on the OBT | Three independent reasons: (a) `DISTINCT` can't collapse fan-out; (b) audit columns defeat `DISTINCT`; (c) the OBT is `orders`-centered, so it silently drops entities with no fact rows — 9 of 2,000 customers have zero orders and would be lost |
+| 9 | Dimensions built from `silver_t`, not `SELECT DISTINCT` on the OBT | Three independent reasons: (a) `DISTINCT` can't collapse fan-out; (b) `DISTINCT` only collapses rows identical across every selected column; (c) the OBT is `orders`-centered, so it silently drops entities with no fact rows — 9 of 2,000 customers have zero orders and would be lost |
 | 10 | Dimensions are `incremental`, not `table` | `silver_t` is append-only row versions; a full rebuild re-scans unbounded history |
 | 11 | SCD1 gold dimensions and SCD2 snapshots both exist | "current" vs "historical" are different query patterns |
 
